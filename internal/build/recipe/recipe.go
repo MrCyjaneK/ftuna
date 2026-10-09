@@ -19,14 +19,17 @@ import (
 var AllArches = []string{"aarch64", "armv7hl", "i486"}
 
 type Recipe struct {
-	ID          string
-	Name        string
-	Dir         string
-	Commit      string
-	Arches      []string
-	URL         string
-	Patches     string
-	Overlay     string
+	ID      string
+	Name    string
+	Dir     string
+	Commit  string
+	Arches  []string
+	URL     string
+	Patches string
+	Overlay string
+	// Path is the directory inside the clone that contains rpm/*.yaml.
+	// "." is the repository root.
+	Path        string
 	Icon        string
 	Screenshots []string
 	Install     []string
@@ -45,6 +48,7 @@ type recipeFile struct {
 	Install     []string `yaml:"install"`
 	Description string   `yaml:"description"`
 	AI          string   `yaml:"ai"`
+	Path        string   `yaml:"path"`
 }
 
 // Root is the recipes checkout named by FTUNA_RECIPES.
@@ -144,6 +148,10 @@ func load(root, yamlPath string) (Recipe, error) {
 	if err != nil {
 		return Recipe{}, err
 	}
+	buildPath, err := cleanPath(file.Path)
+	if err != nil {
+		return Recipe{}, fmt.Errorf("%s: %w", id, err)
+	}
 	return Recipe{
 		ID:          id,
 		Name:        displayName,
@@ -153,12 +161,34 @@ func load(root, yamlPath string) (Recipe, error) {
 		URL:         "https://" + id,
 		Patches:     filepath.Join(dir, "patches"),
 		Overlay:     filepath.Join(dir, "overlay"),
+		Path:        buildPath,
 		Icon:        icon,
 		Screenshots: shots,
 		Install:     install,
 		Description: description,
 		AI:          ai,
 	}, nil
+}
+
+// cleanPath is the directory sfosbuild builds, relative to the clone.
+// An empty path is the repository root. apps/sfos and ./apps/sfos both
+// name the subdirectory that contains rpm/*.yaml.
+func cleanPath(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ".", nil
+	}
+	if filepath.IsAbs(s) {
+		return "", fmt.Errorf("path %q must be inside the repository", s)
+	}
+	clean := filepath.ToSlash(filepath.Clean(s))
+	if clean == "." {
+		return ".", nil
+	}
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path %q must be inside the repository", s)
+	}
+	return clean, nil
 }
 
 func parseName(s string) (string, error) {

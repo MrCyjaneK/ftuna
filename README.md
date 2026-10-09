@@ -81,7 +81,7 @@ Enabling Chum adds that repository for installation. If the Chum app already add
 
 ## Build
 
-Recipes live in [ftuna-recipes](https://github.com/MrCyjaneK/ftuna-recipes). `FTUNA_RECIPES` is that checkout. Each recipe is `<git-host>/<owner>/<name>/` with a pinned `build.yaml`, `overlay/`, and optional `patches/`. The Sailfish OS version is an argument and applies to every recipe. `.env` is read from the working directory.
+Recipes live in [ftuna-recipes](https://github.com/MrCyjaneK/ftuna-recipes). `FTUNA_RECIPES` is that checkout. Each recipe is `<git-host>/<owner>/<name>/` with a pinned `build.yaml`, `overlay/`, and optional `patches/`. Optional `path` in `build.yaml` is the directory inside the clone that contains `rpm/*.yaml`, such as `apps/sfos`. When it is omitted, sfosbuild uses the repository root. The Sailfish OS version is an argument and applies to every recipe. `.env` is read from the working directory.
 
 ```text
 go run ./cmd/ftuna 5.1.0.11 all

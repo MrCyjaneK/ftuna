@@ -48,6 +48,9 @@ func TestDiscoverPinsCommitAndArches(t *testing.T) {
 	if r.Description != "Gallery components" {
 		t.Fatalf("description %q", r.Description)
 	}
+	if r.Path != "." {
+		t.Fatalf("path %q", r.Path)
+	}
 }
 
 func TestDiscoverIconScreenshotsAndInstall(t *testing.T) {
@@ -82,6 +85,48 @@ install:
 	}
 	if r.Description != "Advanced camera.\n\n- Focus" {
 		t.Fatalf("description %q", r.Description)
+	}
+}
+
+func TestDiscoverPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "mrcyjanek", "sfos_orangeflex")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "name: Orange Flex\ncommit: 1023ab50a085e6307f818971276818dd176eecb2\nai: H\ndescription: Orange Flex\npath: ./apps/sfos\n"
+	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Path != "apps/sfos" {
+		t.Fatalf("path %q", got[0].Path)
+	}
+}
+
+func TestRejectsPathOutsideRepository(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "example", "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "build.yaml")
+	base := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\n"
+	for _, yaml := range []string{
+		base + "path: /tmp/apps\n",
+		base + "path: ..\n",
+		base + "path: ../apps\n",
+		base + "path: apps/../../etc\n",
+	} {
+		if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Discover(root); err == nil {
+			t.Fatalf("expected path to fail for %q", yaml)
+		}
 	}
 }
 

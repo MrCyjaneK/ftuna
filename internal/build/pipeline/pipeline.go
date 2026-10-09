@@ -251,8 +251,12 @@ func buildAndQuery(ctx context.Context, r recipe.Recipe, version, work string) (
 	if err := os.RemoveAll(out); err != nil {
 		return nil, err
 	}
-	log.Printf("sfosbuild %s %s %s", version, recipe.ArchArg(r.Arches), r.ID)
-	if err := sfosbuild.Run(ctx, version, recipe.ArchArg(r.Arches), src, out); err != nil {
+	if r.Path == "." {
+		log.Printf("sfosbuild %s %s %s", version, recipe.ArchArg(r.Arches), r.ID)
+	} else {
+		log.Printf("sfosbuild %s %s %s %s", version, recipe.ArchArg(r.Arches), r.ID, r.Path)
+	}
+	if err := sfosbuild.Run(ctx, version, recipe.ArchArg(r.Arches), src, out, r.Path); err != nil {
 		return nil, err
 	}
 	paths, err := listRPMs(out)
