@@ -13,6 +13,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/mrcyjanek/ftuna/internal/store/s3store"
 )
@@ -32,6 +34,7 @@ const (
 	cdnRoot      = "cdn-mirror/openrepos.net"
 	maxAPIBody   = 8 << 20
 	maxAsset     = 32 << 20
+	catalogGets  = 32
 )
 
 var (
@@ -563,34 +566,98 @@ func saveBackup(ctx context.Context, store *s3store.Store, item appBackup) error
 }
 
 func loadAppIndex(ctx context.Context, store *s3store.Store) (map[string]appBackup, error) {
-	keys, err := store.List(ctx, appsPrefix)
+	keys, err := store.ListNotify(ctx, appsPrefix, func(n int) {
+		log.Printf("catalog list %s %d", appsPrefix, n)
+	})
 	if err != nil {
 		return nil, err
 	}
+	log.Printf("catalog %s", usersKey)
 	names, err := publisherNames(ctx, store)
 	if err != nil {
 		return nil, err
 	}
-	var backups []appBackup
+	var jobs []string
 	for _, key := range keys {
-		if appIDFromKey(key) == "" {
-			continue
+		if appIDFromKey(key) != "" {
+			jobs = append(jobs, key)
 		}
-		body, ok, err := store.GetIfExists(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			continue
-		}
-		var item appBackup
-		if err := json.Unmarshal(body, &item); err != nil {
-			return nil, fmt.Errorf("parse %s: %w", key, err)
-		}
-		backups = append(backups, item)
+	}
+	backups, err := fetchAppBackups(ctx, store, jobs)
+	if err != nil {
+		return nil, err
 	}
 	log.Printf("catalog read %d openrepos apps", len(backups))
 	return indexApps(backups, names), nil
+}
+
+func fetchAppBackups(ctx context.Context, store *s3store.Store, keys []string) ([]appBackup, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	slot := make([]appBackup, len(keys))
+	ok := make([]bool, len(keys))
+	var next atomic.Int64
+	var mu sync.Mutex
+	var first error
+	n := min(catalogGets, len(keys))
+	var wg sync.WaitGroup
+	for range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= len(keys) {
+					return
+				}
+				if err := ctx.Err(); err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					return
+				}
+				item, found, err := readAppBackup(ctx, store, keys[i])
+				if err != nil {
+					mu.Lock()
+					if first == nil || (errors.Is(first, context.Canceled) && !errors.Is(err, context.Canceled)) {
+						first = err
+						cancel()
+					}
+					mu.Unlock()
+					return
+				}
+				if found {
+					slot[i], ok[i] = item, true
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if first != nil {
+		return nil, first
+	}
+	backups := make([]appBackup, 0, len(keys))
+	for i := range slot {
+		if ok[i] {
+			backups = append(backups, slot[i])
+		}
+	}
+	return backups, nil
+}
+
+func readAppBackup(ctx context.Context, store *s3store.Store, key string) (appBackup, bool, error) {
+	log.Printf("catalog %s", key)
+	body, exists, err := store.GetIfExists(ctx, key)
+	if err != nil || !exists {
+		return appBackup{}, false, err
+	}
+	var item appBackup
+	if err := json.Unmarshal(body, &item); err != nil {
+		return appBackup{}, false, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return item, true, nil
 }
 
 func appIDFromKey(key string) string {

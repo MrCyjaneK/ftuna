@@ -353,17 +353,23 @@ Recipes are read from FTUNA_RECIPES.
 The public repomd.xml is signed with FTUNA_OSS_GPG_PRIVATE_KEY from .env
 (base64 of an armored secret key with an empty passphrase).
 
-users    Download the OpenRepos user list and store it on S3.
-         A list less than 24 hours old is kept. --force downloads it again.
-mirror   Copy one Sailfish publisher repository onto S3, byte for byte.
-         An unchanged repomd.xml is left alone. --force checks every file.
-         --all checks every account. A 404 is stored and skipped next time.
-         mirror and mirror --all then write the catalog.
-extract  Copy each application's description, icon, and screenshots onto
-         the CDN. An unchanged updated time is left in place. --force
-         downloads every application again. extract then writes the catalog.
-catalog  Write mirror/openrepos/info.json.xz from the stored mirrors and
-         the CDN application backup.
+openrepos users [--force]
+          Download the OpenRepos user list and store it on S3.
+          A list less than 24 hours old is kept. --force downloads it again.
+openrepos mirror <publisher> [--force]
+openrepos mirror --all [--force]
+          Copy one Sailfish publisher repository onto S3, byte for byte.
+          An unchanged repomd.xml is left alone. --force checks every file.
+          --all checks every account. A 404 is stored and skipped next time.
+          openrepos mirror and openrepos mirror --all then write the catalog.
+openrepos extract [--force]
+          Copy each application's description, icon, and screenshots onto
+          the CDN. An unchanged updated time is left in place. --force
+          downloads every application again. openrepos extract then writes
+          the catalog.
+openrepos catalog
+          Write mirror/openrepos/info.json.xz from the stored mirrors and
+          the CDN application backup.
 
 scan     Read each source's rpm-md and write
          <dir>/<aa>/<bb>/<cc>/<sha256>.json for each binary RPM that is not

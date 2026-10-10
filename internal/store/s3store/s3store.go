@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 
@@ -72,9 +73,12 @@ func FromEnv() (*Store, error) {
 	if !strings.Contains(endpoint, "://") {
 		endpoint = "https://" + endpoint
 	}
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.MaxIdleConnsPerHost = 32
 	cfg := aws.Config{
 		Region:      region,
 		Credentials: credentials.NewStaticCredentialsProvider(key, secret, ""),
+		HTTPClient:  &http.Client{Transport: tr},
 	}
 	client := s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)

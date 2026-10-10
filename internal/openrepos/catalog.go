@@ -92,7 +92,9 @@ type catalogRPM struct {
 // backup, then writes info.json.xz. Description, icon, and screenshots come
 // from that backup when an application matches a package.
 func PublishCatalog(ctx context.Context, store *s3store.Store) error {
-	keys, err := store.List(ctx, statePrefix)
+	keys, err := store.ListNotify(ctx, statePrefix, func(n int) {
+		log.Printf("catalog list %s %d", statePrefix, n)
+	})
 	if err != nil {
 		return err
 	}
@@ -106,6 +108,7 @@ func PublishCatalog(ctx context.Context, store *s3store.Store) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		log.Printf("catalog %s", key)
 		body, ok, err := store.GetIfExists(ctx, key)
 		if err != nil {
 			return err
@@ -126,18 +129,19 @@ func PublishCatalog(ctx context.Context, store *s3store.Store) error {
 			return err
 		}
 		sources = append(sources, src)
-		if seen%50 == 0 {
-			log.Printf("catalog read %d publishers", seen)
-		}
+		log.Printf("catalog read %s (%d packages)", st.Publisher, len(src.RPMs))
 	}
+	log.Printf("catalog read %d publishers", seen)
 	apps, err := loadAppIndex(ctx, store)
 	if err != nil {
 		return err
 	}
+	log.Printf("catalog encode")
 	body, err := encodeCatalog(assembleCatalog(sources, apps))
 	if err != nil {
 		return err
 	}
+	log.Printf("catalog write %s (%d bytes)", catalogKey, len(body))
 	res, err := store.PutBytes(ctx, catalogKey, "application/x-xz", body, nil)
 	if err != nil {
 		return err
@@ -163,6 +167,7 @@ func sourceFromState(ctx context.Context, store *s3store.Store, st publisherStat
 	name := tmp.Name()
 	tmp.Close()
 	defer os.Remove(name)
+	log.Printf("catalog %s", key)
 	if err := store.GetFile(ctx, key, name); err != nil {
 		return catalogSource{}, fmt.Errorf("%s: %w", st.Publisher, err)
 	}
