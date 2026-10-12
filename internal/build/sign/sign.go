@@ -68,25 +68,9 @@ func readPrivate(armored []byte) (*openpgp.Entity, error) {
 }
 
 func PublicArmor(entity *openpgp.Entity) (string, error) {
-	var buf bytes.Buffer
-	w, err := armor.Encode(&buf, openpgp.PublicKeyType, nil)
-	if err != nil {
-		return "", err
-	}
-	if err := entity.Serialize(w); err != nil {
-		w.Close()
-		return "", err
-	}
-	if err := w.Close(); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return publicArmor(entity)
 }
 
 func Sign(entity *openpgp.Entity, message []byte) (string, error) {
-	var buf bytes.Buffer
-	if err := openpgp.ArmoredDetachSign(&buf, entity, bytes.NewReader(message), nil); err != nil {
-		return "", err
-	}
-	return buf.String(), nil
+	return signMessage(entity, message)
 }

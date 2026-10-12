@@ -40,18 +40,26 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 	if err != nil {
 		return err
 	}
+	prev, err := loadStatus(ctx, store, version)
+	if err != nil {
+		return err
+	}
 	exists := headExists(ctx, store)
-	var build []recipe.Recipe
-	for _, r := range recipes {
-		need, err := NeedsBuild(r, man, version, false, exists)
-		if err != nil {
-			return err
+	doc, build, err := prepareStatus(recipes, man, prev, version, exists)
+	if err != nil {
+		return err
+	}
+	for _, entry := range doc.Recipes {
+		switch entry.State {
+		case stateSkipped:
+			log.Printf("skip %s unchanged failure", entry.ID)
+		case stateCurrent:
+			log.Printf("skip %s", entry.ID)
 		}
-		if need {
-			build = append(build, r)
-			continue
-		}
-		log.Printf("skip %s", r.ID)
+	}
+	log.Printf("status https://repo-oss.ftuna.eu/%s/status.json", version)
+	if err := putStatus(ctx, store, version, &doc); err != nil {
+		return err
 	}
 	removed := Removed(recipes, man)
 	arches := unionArches(recipes)
@@ -98,14 +106,31 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 	defer os.RemoveAll(work)
 	repoRoot := filepath.Join(work, "repo")
 	local := map[string]map[string]string{}
+	index := map[string]int{}
+	for i := range doc.Recipes {
+		index[doc.Recipes[i].ID] = i
+	}
 	for _, r := range build {
-		info, err := buildAndQuery(ctx, r, version, work)
+		i := index[r.ID]
+		doc.Recipes[i].State = stateBuilding
+		if err := putStatus(ctx, store, version, &doc); err != nil {
+			return err
+		}
+		info, buildLog, err := buildAndQuery(ctx, r, version, work)
 		if err != nil {
-			return fmt.Errorf("%s: %w", r.ID, err)
+			noteFailure(&doc, i, err, buildLog)
+			if err := putStatus(ctx, store, version, &doc); err != nil {
+				return err
+			}
+			continue
 		}
 		placed, err := placeBuilt(filepath.Join(work, "rpms"), info, r.ID, r.Arches, repoRoot)
 		if err != nil {
-			return fmt.Errorf("%s: %w", r.ID, err)
+			noteFailure(&doc, i, err, buildLog)
+			if err := putStatus(ctx, store, version, &doc); err != nil {
+				return err
+			}
+			continue
 		}
 		setRecipe(&man, r, placed)
 		for arch, rpms := range placed {
@@ -116,6 +141,10 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 				href := filepath.ToSlash(rpm.File)
 				local[arch][href] = filepath.Join(repoRoot, arch, filepath.FromSlash(href))
 			}
+		}
+		noteBuilt(&doc, i, r, placed)
+		if err := putStatus(ctx, store, version, &doc); err != nil {
+			return err
 		}
 	}
 	for _, name := range removed {
@@ -128,7 +157,8 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 	for _, arch := range arches {
 		want := archFiles(man, arch)
 		if len(want) == 0 {
-			return fmt.Errorf("%s %s has no rpms", version, arch)
+			log.Printf("%s %s has no rpms", version, arch)
+			continue
 		}
 		changed := rewrite[arch] || len(local[arch]) > 0 || !sameFiles(before[arch], want)
 		if !changed {
@@ -164,6 +194,9 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 		return err
 	}
 	if err := putManifest(ctx, store, version, man); err != nil {
+		return err
+	}
+	if err := putStatus(ctx, store, version, &doc); err != nil {
 		return err
 	}
 	return publishOSSInfo(ctx, store, recipesRoot, version, recipes, man)
@@ -202,7 +235,7 @@ func One(ctx context.Context, version, name, id string) error {
 	}
 	defer os.RemoveAll(work)
 	repoRoot := filepath.Join(work, "repo")
-	info, err := buildAndQuery(ctx, r, version, work)
+	info, _, err := buildAndQuery(ctx, r, version, work)
 	if err != nil {
 		return fmt.Errorf("%s: %w", r.ID, err)
 	}
@@ -237,41 +270,51 @@ func One(ctx context.Context, version, name, id string) error {
 	return nil
 }
 
-func buildAndQuery(ctx context.Context, r recipe.Recipe, version, work string) ([]deps.RPM, error) {
+func buildAndQuery(ctx context.Context, r recipe.Recipe, version, work string) ([]deps.RPM, string, error) {
 	// Basename becomes the sfosbuild image name. A shared "src" would let the next
 	// recipe rebuild that image and drop libraries compiled by image hooks.
 	src := filepath.Join(work, strings.ReplaceAll(r.ID, "/", "_"))
 	if err := os.RemoveAll(src); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := checkout.Prepare(ctx, r.URL, r.Commit, r.Patches, r.Overlay, src); err != nil {
-		return nil, err
+		return nil, "", err
+	}
+	if len(r.Repos) > 0 {
+		log.Printf("repos %s", strings.Join(r.Repos, " "))
+		if err := recipe.InstallRepos(src, r.Repos); err != nil {
+			return nil, "", err
+		}
+		if err := checkout.CommitPath(ctx, src, ".sfosbuild/image/00-ftuna-repos.sh", "ftuna repos"); err != nil {
+			return nil, "", err
+		}
 	}
 	out := filepath.Join(work, "rpms")
 	if err := os.RemoveAll(out); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if r.Path == "." {
 		log.Printf("sfosbuild %s %s %s", version, recipe.ArchArg(r.Arches), r.ID)
 	} else {
 		log.Printf("sfosbuild %s %s %s %s", version, recipe.ArchArg(r.Arches), r.ID, r.Path)
 	}
-	if err := sfosbuild.Run(ctx, version, recipe.ArchArg(r.Arches), src, out, r.Path); err != nil {
-		return nil, err
+	buildLog, err := sfosbuild.Run(ctx, version, recipe.ArchArg(r.Arches), src, out, r.Path)
+	if err != nil {
+		return nil, buildLog, err
 	}
 	paths, err := listRPMs(out)
 	if err != nil {
-		return nil, err
+		return nil, buildLog, err
 	}
 	outRPMs := make([]deps.RPM, 0, len(paths))
 	for _, path := range paths {
 		rpm, err := rpmmd.Read(path)
 		if err != nil {
-			return nil, err
+			return nil, buildLog, err
 		}
 		outRPMs = append(outRPMs, rpm)
 	}
-	return outRPMs, nil
+	return outRPMs, buildLog, nil
 }
 
 func headExists(ctx context.Context, store *s3store.Store) func(string) (bool, error) {
@@ -316,7 +359,7 @@ func setRecipe(man *Manifest, r recipe.Recipe, byArch map[string][]deps.RPM) {
 	if man.Recipes == nil {
 		man.Recipes = map[string]RecipeBuild{}
 	}
-	rb := RecipeBuild{Commit: r.Commit, Arches: map[string]ArchBuild{}}
+	rb := RecipeBuild{Commit: r.Commit, Repos: append([]string{}, r.Repos...), Arches: map[string]ArchBuild{}}
 	for _, arch := range r.Arches {
 		var recs []RPMRec
 		for _, rpm := range byArch[arch] {

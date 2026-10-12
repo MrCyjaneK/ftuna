@@ -40,6 +40,7 @@ type ArchBuild struct {
 
 type RecipeBuild struct {
 	Commit string               `json:"commit"`
+	Repos  []string             `json:"repos,omitempty"`
 	Arches map[string]ArchBuild `json:"arches"`
 }
 
@@ -51,12 +52,24 @@ func emptyManifest() Manifest {
 	return Manifest{Recipes: map[string]RecipeBuild{}}
 }
 
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func NeedsBuild(r recipe.Recipe, man Manifest, version string, force bool, exists func(string) (bool, error)) (bool, error) {
 	if force {
 		return true, nil
 	}
 	rb, ok := man.Recipes[r.ID]
-	if !ok || rb.Commit != r.Commit {
+	if !ok || rb.Commit != r.Commit || !sameStrings(rb.Repos, r.Repos) {
 		return true, nil
 	}
 	for _, arch := range r.Arches {

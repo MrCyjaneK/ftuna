@@ -47,6 +47,7 @@ mirror/openrepos/info.json.xz                      # catalog index, written afte
 
 repo/ftuna-oss/<version>/<arch>/<recipe>/*.rpm     # signed public rpm-md repo; repodata stays on <arch>/
 repo/ftuna-oss/<version>/manifest.json             # commit -> rpm names, for rebuild skips
+repo/ftuna-oss/<version>/status.json               # per-recipe build status; failures stay until the recipe changes
 repo/ftuna-oss/info.json.xz                        # catalog index, regenerated on every all publish
 repo/ftuna-oss/ftuna-oss.key
 scratch/<user>/<id>/<arch>/<recipe>/*.rpm          # unsigned repo; <id> is the publish name
@@ -81,7 +82,11 @@ Enabling Chum adds that repository for installation. If the Chum app already add
 
 ## Build
 
-Recipes live in [ftuna-recipes](https://github.com/MrCyjaneK/ftuna-recipes). `FTUNA_RECIPES` is that checkout. Each recipe is `<git-host>/<owner>/<name>/` with a pinned `build.yaml`, `overlay/`, and optional `patches/`. Optional `path` in `build.yaml` is the directory inside the clone that contains `rpm/*.yaml`, such as `apps/sfos`. When it is omitted, sfosbuild uses the repository root. The Sailfish OS version is an argument and applies to every recipe. `.env` is read from the working directory.
+Recipes live in [ftuna-recipes](https://github.com/MrCyjaneK/ftuna-recipes). `FTUNA_RECIPES` is that checkout. Each recipe is `<git-host>/<owner>/<name>/` with a pinned `build.yaml`, `overlay/`, and optional `patches/`. Optional `path` in `build.yaml` is the directory inside the clone that contains `rpm/*.yaml`, such as `apps/sfos`. When it is omitted, sfosbuild uses the repository root. A monorepo can list more than one package: `build.yaml` is the repository, and `libfoo.yaml` in the same directory is a second package from the same clone, with its own `path`, `install`, and `repos`. Those files share `overlay/` and `patches/`. sfosbuild builds every `rpm/*.yaml` it finds in the selected directory.
+
+`repos` is a list of extra https repositories installed into the SDK image before the build, as `.sfosbuild/image/00-ftuna-repos.sh`. `{version}` is the Sailfish OS version (`5.1.0.11`), `{release}` is major.minor (`5.1`), and `{arch}` is `aarch64`, `armv7hl`, or `i486`. A `{version}/{arch}` URL keeps the full version, which is what `https://repo-oss.ftuna.eu/{version}/{arch}/` uses. A `{version}_{arch}` URL follows Chum: from 4.6, `{version}` is major.minor, so `https://repo.sailfishos.org/obs/sailfishos:/chum/{version}_{arch}/` becomes `5.1_aarch64`. Append `;` and an https signing-key URL, for example `https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key`. That key is set as `gpgkey=` so zypper imports it when the repository is refreshed. Changing `repos` rebuilds that package.
+
+The Sailfish OS version is an argument and applies to every recipe. `.env` is read from the working directory.
 
 ```text
 go run ./cmd/ftuna 5.1.0.11 all

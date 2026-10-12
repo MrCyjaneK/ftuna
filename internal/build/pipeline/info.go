@@ -121,7 +121,7 @@ func scratchItems(root, repoRoot, account, id string, r recipe.Recipe, byArch ma
 	if len(built) == 0 {
 		return nil, fmt.Errorf("%s: no rpms for info.json.xz", r.ID)
 	}
-	updated, err := recipe.Updated(root, filepath.Join(r.Dir, "build.yaml"))
+	updated, err := recipe.Updated(root, r.File)
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func fillSHA256(ctx context.Context, store *s3store.Store, key string, rpm *deps
 }
 
 func itemFor(ctx context.Context, store *s3store.Store, root string, r recipe.Recipe, built []catalog.Built) (catalog.Item, error) {
-	updated, err := recipe.Updated(root, filepath.Join(r.Dir, "build.yaml"))
+	updated, err := recipe.Updated(root, r.File)
 	if err != nil {
 		return catalog.Item{}, err
 	}

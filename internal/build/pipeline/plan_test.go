@@ -74,6 +74,41 @@ func TestNeedsBuildSkipsPublishedCommit(t *testing.T) {
 	}
 }
 
+func TestNeedsBuildWhenReposChange(t *testing.T) {
+	r := recipe.Recipe{
+		ID:     "github.com/example/app",
+		Commit: "0123456789abcdef0123456789abcdef01234567",
+		Arches: []string{"aarch64"},
+		Repos:  []string{"https://repo-oss.ftuna.eu/{version}/{arch}/"},
+	}
+	man := Manifest{Recipes: map[string]RecipeBuild{
+		r.ID: {
+			Commit: r.Commit,
+			Arches: map[string]ArchBuild{
+				"aarch64": {RPMs: []RPMRec{{File: "github.com/example/app/app-1.aarch64.rpm", Name: "app"}}},
+			},
+		},
+	}}
+	exists := func(string) (bool, error) { return true, nil }
+	need, err := NeedsBuild(r, man, "5.1.0.11", false, exists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !need {
+		t.Fatal("missing repos should rebuild")
+	}
+	rb := man.Recipes[r.ID]
+	rb.Repos = append([]string{}, r.Repos...)
+	man.Recipes[r.ID] = rb
+	need, err = NeedsBuild(r, man, "5.1.0.11", false, exists)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if need {
+		t.Fatal("same repos should skip")
+	}
+}
+
 func TestPlaceBuiltNestsByRecipe(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "out")

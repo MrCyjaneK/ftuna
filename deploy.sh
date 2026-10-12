@@ -16,6 +16,9 @@ export FTUNA_RATINGS
 export FTUNA_OSS_GPG_PRIVATE_KEY
 
 iter=0
+    echo '> ftuna 5.1.0.11 all'
+    $ftuna 5.1.0.11 all
+    exit $?
 while true; do
     sleep 600
     echo "Next run in 10 minutes"

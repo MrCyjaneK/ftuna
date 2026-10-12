@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -37,6 +38,14 @@ type Recipe struct {
 	Description string
 	// AI is the Chum AIRating: H, A, B, C, V, or X.
 	AI string
+	// File is the recipe yaml. build.yaml keeps the directory as its ID.
+	// Another file in that directory, such as libfoo.yaml, is a second
+	// package from the same clone and its ID ends with /libfoo.
+	File string
+	// Repos are extra rpm repositories installed into the SDK image.
+	// A URL may be followed by ; and an https signing key.
+	// The key is written as gpgkey= so zypper imports it on refresh.
+	Repos []string
 }
 
 type recipeFile struct {
@@ -49,6 +58,7 @@ type recipeFile struct {
 	Description string   `yaml:"description"`
 	AI          string   `yaml:"ai"`
 	Path        string   `yaml:"path"`
+	Repos       []string `yaml:"repos"`
 }
 
 // Root is the recipes checkout named by FTUNA_RECIPES.
@@ -75,12 +85,12 @@ func Discover(root string) ([]Recipe, error) {
 		}
 		if d.IsDir() {
 			switch d.Name() {
-			case "overlay", "patches", ".git":
+			case "overlay", "patches", ".git", ".github":
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if d.Name() != "build.yaml" {
+		if !strings.HasSuffix(d.Name(), ".yaml") {
 			return nil
 		}
 		r, err := load(root, path)
@@ -94,7 +104,28 @@ func Discover(root string) ([]Recipe, error) {
 		return nil, err
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	seen := map[string]string{}
+	for _, r := range out {
+		if prev, ok := seen[r.ID]; ok {
+			return nil, fmt.Errorf("duplicate recipe %s (%s and %s)", r.ID, prev, r.File)
+		}
+		seen[r.ID] = r.File
+	}
 	return out, nil
+}
+
+// recipeStem is the filename of a second package in a repository directory.
+var recipeStem = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
+func recipeID(dir, base string) (string, error) {
+	if base == "build.yaml" {
+		return dir, nil
+	}
+	stem := strings.TrimSuffix(base, ".yaml")
+	if !recipeStem.MatchString(stem) {
+		return "", fmt.Errorf("recipe file %s: use build.yaml, or a name of letters, digits, '.', '_' and '-'", base)
+	}
+	return dir + "/" + stem, nil
 }
 
 func load(root, yamlPath string) (Recipe, error) {
@@ -103,9 +134,13 @@ func load(root, yamlPath string) (Recipe, error) {
 	if err != nil {
 		return Recipe{}, err
 	}
-	id := filepath.ToSlash(rel)
-	if id == "" || id == "." || strings.HasPrefix(id, "../") || strings.Contains(id, "/../") {
-		return Recipe{}, fmt.Errorf("%s: recipe path %q is not under %s", yamlPath, id, root)
+	source := filepath.ToSlash(rel)
+	if source == "" || source == "." || strings.HasPrefix(source, "../") || strings.Contains(source, "/../") {
+		return Recipe{}, fmt.Errorf("%s: recipe path %q is not under %s", yamlPath, source, root)
+	}
+	id, err := recipeID(source, filepath.Base(yamlPath))
+	if err != nil {
+		return Recipe{}, fmt.Errorf("%s: %w", source, err)
 	}
 	body, err := os.ReadFile(yamlPath)
 	if err != nil {
@@ -152,13 +187,17 @@ func load(root, yamlPath string) (Recipe, error) {
 	if err != nil {
 		return Recipe{}, fmt.Errorf("%s: %w", id, err)
 	}
+	repos, err := cleanRepos(id, file.Repos)
+	if err != nil {
+		return Recipe{}, err
+	}
 	return Recipe{
 		ID:          id,
 		Name:        displayName,
 		Dir:         dir,
 		Commit:      file.Commit,
 		Arches:      arches,
-		URL:         "https://" + id,
+		URL:         "https://" + source,
 		Patches:     filepath.Join(dir, "patches"),
 		Overlay:     filepath.Join(dir, "overlay"),
 		Path:        buildPath,
@@ -167,6 +206,8 @@ func load(root, yamlPath string) (Recipe, error) {
 		Install:     install,
 		Description: description,
 		AI:          ai,
+		File:        yamlPath,
+		Repos:       repos,
 	}, nil
 }
 
@@ -261,7 +302,7 @@ func cleanNames(recipeName string, names []string) ([]string, error) {
 	return out, nil
 }
 
-// Updated is the committer date of the latest commit that touched build.yaml.
+// Updated is the committer date of the latest commit that touched the recipe yaml.
 // A file that has never been committed uses its modification time.
 func Updated(repoRoot, yamlPath string) (time.Time, error) {
 	rel, err := filepath.Rel(repoRoot, yamlPath)

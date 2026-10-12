@@ -2,7 +2,9 @@ package recipe
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -220,6 +222,86 @@ func TestRejectsShortCommit(t *testing.T) {
 	}
 }
 
+func TestDiscoverSeveralRecipesInOneRepository(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "example", "mono")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := "commit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: A package\n"
+	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte("name: The app\n"+base), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	lib := "name: The library\n" + base + "path: libs/foo\nrepos:\n  - https://repo-oss.ftuna.eu/{version}/{arch}/\n  - https://repo.sailfishos.org/obs/sailfishos:/chum/{version}_{arch}/\n"
+	if err := os.WriteFile(filepath.Join(dir, "libfoo.yaml"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("recipes %d", len(got))
+	}
+	if got[0].ID != "github.com/example/mono" || got[0].URL != "https://github.com/example/mono" || got[0].Repos != nil {
+		t.Fatalf("app %#v", got[0])
+	}
+	libRecipe := got[1]
+	if libRecipe.ID != "github.com/example/mono/libfoo" || libRecipe.URL != "https://github.com/example/mono" {
+		t.Fatalf("id %s url %s", libRecipe.ID, libRecipe.URL)
+	}
+	if libRecipe.Path != "libs/foo" || len(libRecipe.Repos) != 2 {
+		t.Fatalf("%#v", libRecipe)
+	}
+	if filepath.Base(libRecipe.File) != "libfoo.yaml" {
+		t.Fatalf("file %s", libRecipe.File)
+	}
+}
+
+func TestDiscoverRejectsDuplicateRecipeID(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "example", "app", "foo")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: A package\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: A package\n"
+	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(dir), "foo.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Discover(root); err == nil {
+		t.Fatal("expected duplicate id")
+	}
+}
+
+func TestRejectsRepoURL(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "example", "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "build.yaml")
+	base := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\nrepos:\n"
+	for _, repo := range []string{
+		"  - http://repo-oss.ftuna.eu/{version}/{arch}/\n",
+		"  - https://repo-oss.ftuna.eu/{version}/{arch}/;id\n",
+		"  - https://repo-oss.ftuna.eu/{version}/{arch}/;\n",
+		"  - https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/a.key;https://example.com/b.key\n",
+		"  - https://repo-oss.ftuna.eu/{nope}/{arch}/\n",
+		"  - https://{version}.example/{arch}/\n",
+		"  - https://repo-oss.ftuna.eu/{version}/{arch}/\n  - https://repo-oss.ftuna.eu/{version}/{arch}/\n",
+	} {
+		if err := os.WriteFile(path, []byte(base+repo), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Discover(root); err == nil {
+			t.Fatalf("expected repo to fail for %q", repo)
+		}
+	}
+}
+
 func TestRootFromEnv(t *testing.T) {
 	t.Setenv("FTUNA_RECIPES", "")
 	if _, err := Root(); err == nil {
@@ -243,6 +325,107 @@ func TestRootFromEnv(t *testing.T) {
 	if _, err := Root(); err == nil {
 		t.Fatal("missing")
 	}
+}
+
+func TestRepoScriptExpand(t *testing.T) {
+	dir := t.TempDir()
+	repos := []string{
+		"https://repo-oss.ftuna.eu/{version}/{arch}/",
+		"https://repo.sailfishos.org/obs/sailfishos:/chum/{version}_{arch}/",
+		"https://example.com/{release}/{arch}/",
+	}
+	if err := InstallRepos(dir, repos); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, ".sfosbuild", "image", "00-ftuna-repos.sh")
+	now := expandRepos(t, script, "5.1.0.11", "aarch64")
+	for _, want := range []string{
+		"https://repo-oss.ftuna.eu/5.1.0.11/aarch64/",
+		"https://repo.sailfishos.org/obs/sailfishos:/chum/5.1_aarch64/",
+		"https://example.com/5.1/aarch64/",
+	} {
+		if !strings.Contains(now, want) {
+			t.Fatalf("missing %s in %s", want, now)
+		}
+	}
+	old := expandRepos(t, script, "4.5.0.24", "armv7hl")
+	if !strings.Contains(old, "https://repo.sailfishos.org/obs/sailfishos:/chum/4.5.0.24_armv7hl/") {
+		t.Fatalf("old chum %s", old)
+	}
+	if !strings.Contains(old, "https://example.com/4.5/armv7hl/") {
+		t.Fatalf("old release %s", old)
+	}
+	if err := InstallRepos(t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDiscoverAcceptsRepoKey(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "example", "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\nrepos:\n  - https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key\n"
+	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key"
+	if len(got) != 1 || len(got[0].Repos) != 1 || got[0].Repos[0] != want {
+		t.Fatalf("%#v", got)
+	}
+}
+
+func TestRepoKeyAddedWithGPGKey(t *testing.T) {
+	dir := t.TempDir()
+	repos := []string{
+		"https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key",
+		"https://example.com/{release}/{arch}/",
+	}
+	if err := InstallRepos(dir, repos); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, ".sfosbuild", "image", "00-ftuna-repos.sh")
+	out := expandRepos(t, script, "5.1.0.11", "aarch64")
+	repo, err := os.ReadFile("/tmp/ftuna-extra-1.repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(repo)
+	for _, want := range []string{
+		"baseurl=https://repo-oss.ftuna.eu/5.1.0.11/aarch64/\n",
+		"gpgkey=https://repo-oss.ftuna.eu/ftuna-oss.key\n",
+		"gpgcheck=1\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in %s", want, text)
+		}
+	}
+	addLine := "zypper --non-interactive ar /tmp/ftuna-extra-1.repo\n"
+	refreshLine := "zypper --non-interactive --gpg-auto-import-keys refresh ftuna-extra-1\n"
+	addAt := strings.Index(out, addLine)
+	refreshAt := strings.Index(out, refreshLine)
+	if addAt < 0 || refreshAt < 0 || addAt > refreshAt {
+		t.Fatalf("add before refresh:\n%s", out)
+	}
+	if !strings.Contains(out, "zypper --non-interactive ar -f https://example.com/5.1/aarch64/ ftuna-extra-2\n") {
+		t.Fatalf("second repo:\n%s", out)
+	}
+}
+
+func expandRepos(t *testing.T, script, version, arch string) string {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", `zypper() { printf 'zypper %s\n' "$*"; }; rpm() { printf 'rpm %s\n' "$*"; }; . "$1"`, "sh", script)
+	cmd.Env = append(os.Environ(), "SFOS_VERSION="+version, "SFOS_ARCH="+arch)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	return string(out)
 }
 
 func TestValidVersion(t *testing.T) {

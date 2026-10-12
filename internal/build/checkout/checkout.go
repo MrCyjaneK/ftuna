@@ -203,6 +203,14 @@ func commitDirtySubmodules(ctx context.Context, dir string) error {
 	return err
 }
 
+// CommitPath records one file written after the overlay, such as the repo hook.
+func CommitPath(ctx context.Context, dir, rel, message string) error {
+	if _, err := git(ctx, dir, "add", "-f", "--", rel); err != nil {
+		return err
+	}
+	return commit(ctx, dir, message)
+}
+
 func commit(ctx context.Context, dir, message string) error {
 	_, err := git(ctx, dir,
 		"-c", "user.name=ftuna",
