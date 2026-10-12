@@ -28,7 +28,8 @@ var (
 	repoName  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,79}$`)
 )
 
-const chunkSize = 8 << 20
+// 90 MiB stays under the 100 MB request-body cap on a Free Cloudflare zone.
+const chunkSize = 90 << 20
 
 func BaseURL() string {
 	if v := os.Getenv("FTUNA_SCRATCH_URL"); v != "" {
@@ -220,63 +221,49 @@ func publish(ctx context.Context, base, token, dir, id string) (string, error) {
 	}
 	buf := make([]byte, chunkSize)
 	var repo string
+	stalls := 0
 	for {
 		at, err := f.Seek(0, io.SeekCurrent)
 		if err != nil {
 			return "", err
 		}
-		if at >= size {
+		var body []byte
+		if at < size {
+			n, err := f.Read(buf)
+			if n == 0 && err == io.EOF {
+				break
+			}
+			if err != nil && err != io.EOF {
+				return "", err
+			}
+			body = buf[:n]
+		} else if repo != "" {
 			break
 		}
-		n, err := f.Read(buf)
-		if n > 0 {
-			log.Printf("upload %s/%s", byteSize(at), byteSize(size))
-			part, err := http.NewRequestWithContext(ctx, http.MethodPatch, loc, bytes.NewReader(buf[:n]))
-			if err != nil {
-				return "", err
-			}
-			part.Header.Set("authorization", "Bearer "+token)
-			part.Header.Set("tus-resumable", "1.0.0")
-			part.Header.Set("content-type", "application/offset+octet-stream")
-			part.Header.Set("upload-offset", strconv.FormatInt(at, 10))
-			part.ContentLength = int64(n)
-			res, err := http.DefaultClient.Do(part)
-			if err != nil {
-				return "", err
-			}
-			msg, _ := io.ReadAll(res.Body)
-			res.Body.Close()
-			if res.StatusCode == http.StatusConflict {
-				off, err := headOffset(ctx, loc, token)
-				if err != nil {
-					return "", err
-				}
-				log.Printf("resume at %s/%s", byteSize(off), byteSize(size))
-				if _, err := f.Seek(off, io.SeekStart); err != nil {
-					return "", err
-				}
-				continue
-			}
-			if res.StatusCode != http.StatusNoContent {
-				return "", fmt.Errorf("upload: %s: %s", res.Status, bytes.TrimSpace(msg))
-			}
-			if v := res.Header.Get("x-ftuna-repo"); v != "" {
-				repo = v
-			}
-			next, err := strconv.ParseInt(res.Header.Get("upload-offset"), 10, 64)
-			if err != nil {
-				return "", fmt.Errorf("upload: bad offset")
-			}
-			if _, err := f.Seek(next, io.SeekStart); err != nil {
-				return "", err
-			}
-			log.Printf("upload %s/%s", byteSize(next), byteSize(size))
-		}
-		if err == io.EOF {
-			break
-		}
+		next, got, err := sendChunk(ctx, loc, token, at, body)
 		if err != nil {
 			return "", err
+		}
+		if got != "" {
+			repo = got
+		}
+		if next < at {
+			return "", fmt.Errorf("upload: offset went backwards")
+		}
+		if _, err := f.Seek(next, io.SeekStart); err != nil {
+			return "", err
+		}
+		if got == "" && next == at {
+			stalls++
+			if stalls > 10000 {
+				return "", fmt.Errorf("upload stalled")
+			}
+			log.Printf("upload finishing %s/%s", byteSize(size), byteSize(size))
+			continue
+		}
+		stalls = 0
+		if next > at {
+			log.Printf("upload %s/%s", byteSize(next), byteSize(size))
 		}
 	}
 	if repo == "" {
@@ -295,12 +282,100 @@ func publish(ctx context.Context, base, token, dir, id string) (string, error) {
 
 func byteSize(n int64) string {
 	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
 	case n >= 1<<20:
 		return fmt.Sprintf("%.1f MiB", float64(n)/(1<<20))
 	case n >= 1<<10:
 		return fmt.Sprintf("%.1f KiB", float64(n)/(1<<10))
 	default:
 		return fmt.Sprintf("%d B", n)
+	}
+}
+
+const chunkAttempts = 6
+
+func sendChunk(ctx context.Context, loc, token string, at int64, body []byte) (next int64, repo string, err error) {
+	var pause time.Duration
+	var last error
+	for attempt := 1; attempt <= chunkAttempts; attempt++ {
+		if pause > 0 {
+			timer := time.NewTimer(pause)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return 0, "", ctx.Err()
+			case <-timer.C:
+			}
+		}
+		reqCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+		next, repo, retry, err := patchChunk(reqCtx, loc, token, at, body)
+		cancel()
+		if !retry {
+			return next, repo, err
+		}
+		last = err
+		if off, got, herr := headProgress(ctx, loc, token); herr == nil && off > at {
+			return off, got, nil
+		}
+		if attempt == chunkAttempts {
+			break
+		}
+		pause = time.Second << (attempt - 1)
+		if pause > 8*time.Second {
+			pause = 8 * time.Second
+		}
+		log.Printf("upload retry %s: %v", byteSize(at), err)
+	}
+	if last == nil {
+		last = fmt.Errorf("upload: storage error")
+	}
+	return 0, "", last
+}
+
+func patchChunk(ctx context.Context, loc, token string, at int64, body []byte) (next int64, repo string, retry bool, err error) {
+	part, err := http.NewRequestWithContext(ctx, http.MethodPatch, loc, bytes.NewReader(body))
+	if err != nil {
+		return 0, "", false, err
+	}
+	part.Header.Set("authorization", "Bearer "+token)
+	part.Header.Set("tus-resumable", "1.0.0")
+	part.Header.Set("content-type", "application/offset+octet-stream")
+	part.Header.Set("upload-offset", strconv.FormatInt(at, 10))
+	part.ContentLength = int64(len(body))
+	res, err := http.DefaultClient.Do(part)
+	if err != nil {
+		return 0, "", true, err
+	}
+	msg, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+	res.Body.Close()
+	if res.StatusCode == http.StatusConflict {
+		off, got, err := headProgress(ctx, loc, token)
+		if err != nil {
+			return 0, "", false, err
+		}
+		log.Printf("resume at %s", byteSize(off))
+		return off, got, false, nil
+	}
+	if retryable(res.StatusCode) {
+		return 0, "", true, fmt.Errorf("upload: %s: %s", res.Status, bytes.TrimSpace(msg))
+	}
+	if res.StatusCode != http.StatusNoContent {
+		return 0, "", false, fmt.Errorf("upload: %s: %s", res.Status, bytes.TrimSpace(msg))
+	}
+	next, err = strconv.ParseInt(res.Header.Get("upload-offset"), 10, 64)
+	if err != nil {
+		return 0, "", false, fmt.Errorf("upload: bad offset")
+	}
+	return next, res.Header.Get("x-ftuna-repo"), false, nil
+}
+
+func retryable(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -469,23 +544,27 @@ func resolve(base, loc string) (string, error) {
 	return b.ResolveReference(u).String(), nil
 }
 
-func headOffset(ctx context.Context, loc, token string) (int64, error) {
+func headProgress(ctx context.Context, loc, token string) (int64, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, loc, nil)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	req.Header.Set("authorization", "Bearer "+token)
 	req.Header.Set("tus-resumable", "1.0.0")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
 	io.Copy(io.Discard, res.Body)
 	res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("resume: %s", res.Status)
+		return 0, "", fmt.Errorf("resume: %s", res.Status)
 	}
-	return strconv.ParseInt(res.Header.Get("upload-offset"), 10, 64)
+	off, err := strconv.ParseInt(res.Header.Get("upload-offset"), 10, 64)
+	if err != nil {
+		return 0, "", fmt.Errorf("resume: bad offset")
+	}
+	return off, res.Header.Get("x-ftuna-repo"), nil
 }
 
 func do(req *http.Request) ([]byte, error) {

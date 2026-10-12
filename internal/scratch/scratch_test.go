@@ -201,7 +201,7 @@ func TestUploadChunks(t *testing.T) {
 	defer srv.Close()
 
 	dir := t.TempDir()
-	// Larger than one 8 MiB chunk, stored uncompressed inside the tar via a sparse-looking payload.
+	// Larger than one chunk, stored uncompressed inside the tar.
 	payload := bytesRepeat(chunkSize + 4096)
 	writeFile(t, filepath.Join(dir, "aarch64", "big.rpm"), append([]byte{0xed, 0xab, 0xee, 0xdb}, payload...))
 	writeFile(t, filepath.Join(dir, "aarch64", "repodata", "repomd.xml"), []byte("<repomd/>"))
@@ -214,6 +214,151 @@ func TestUploadChunks(t *testing.T) {
 	}
 	if patches < 2 {
 		t.Fatalf("patches %d, want at least 2", patches)
+	}
+}
+
+func TestUploadRetriesStorageError(t *testing.T) {
+	const account = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const id = "retry"
+	var patches, got, length int64
+	fails := 2
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("tus-resumable", "1.0.0")
+		switch {
+		case r.Method == http.MethodPost:
+			length, _ = strconv.ParseInt(r.Header.Get("upload-length"), 10, 64)
+			w.Header().Set("location", "/v1/repos/"+id)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodHead:
+			w.Header().Set("upload-offset", strconv.FormatInt(got, 10))
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch:
+			patches++
+			if fails > 0 {
+				fails--
+				http.Error(w, "storage error", http.StatusBadGateway)
+				return
+			}
+			n, _ := io.Copy(io.Discard, r.Body)
+			got += n
+			w.Header().Set("upload-offset", strconv.FormatInt(got, 10))
+			if got == length {
+				w.Header().Set("x-ftuna-repo", "/"+account+"/"+id+"/")
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "aarch64", "app.rpm"), []byte{0xed, 0xab, 0xee, 0xdb})
+	writeFile(t, filepath.Join(dir, "aarch64", "repodata", "repomd.xml"), []byte("<repomd/>"))
+	repo, err := Publish(context.Background(), srv.URL, account+".secret", dir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo != "/"+account+"/"+id+"/" {
+		t.Fatalf("repo %q", repo)
+	}
+	if patches < 3 {
+		t.Fatalf("patches %d, want the failed attempts plus a success", patches)
+	}
+	if got != length {
+		t.Fatalf("stored %d, archive %d", got, length)
+	}
+}
+
+func TestUploadResumesCommittedChunk(t *testing.T) {
+	const account = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const id = "committed"
+	var patches, got, length int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("tus-resumable", "1.0.0")
+		switch {
+		case r.Method == http.MethodPost:
+			length, _ = strconv.ParseInt(r.Header.Get("upload-length"), 10, 64)
+			w.Header().Set("location", "/v1/repos/"+id)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodHead:
+			w.Header().Set("upload-offset", strconv.FormatInt(got, 10))
+			if got == length && length > 0 {
+				w.Header().Set("x-ftuna-repo", "/"+account+"/"+id+"/")
+			}
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPatch:
+			patches++
+			n, _ := io.Copy(io.Discard, r.Body)
+			got += n
+			http.Error(w, "storage error", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "aarch64", "app.rpm"), []byte{0xed, 0xab, 0xee, 0xdb})
+	writeFile(t, filepath.Join(dir, "aarch64", "repodata", "repomd.xml"), []byte("<repomd/>"))
+	repo, err := Publish(context.Background(), srv.URL, account+".secret", dir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo != "/"+account+"/"+id+"/" {
+		t.Fatalf("repo %q", repo)
+	}
+	if patches != 1 {
+		t.Fatalf("patches %d, want 1", patches)
+	}
+	if got != length {
+		t.Fatalf("stored %d, archive %d", got, length)
+	}
+}
+
+func TestUploadRepeatsChunkWhileCopying(t *testing.T) {
+	const account = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const id = "copying"
+	var patches, length int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("tus-resumable", "1.0.0")
+		switch {
+		case r.Method == http.MethodPost:
+			length, _ = strconv.ParseInt(r.Header.Get("upload-length"), 10, 64)
+			w.Header().Set("location", "/v1/repos/"+id)
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPatch:
+			patches++
+			n, _ := io.Copy(io.Discard, r.Body)
+			if patches == 1 {
+				if n == 0 {
+					t.Errorf("first patch was empty")
+				}
+				w.Header().Set("upload-offset", strconv.FormatInt(length, 10))
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			if n != 0 {
+				t.Errorf("continue sent %d bytes", n)
+			}
+			w.Header().Set("upload-offset", strconv.FormatInt(length, 10))
+			w.Header().Set("x-ftuna-repo", "/"+account+"/"+id+"/")
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "aarch64", "app.rpm"), []byte{0xed, 0xab, 0xee, 0xdb})
+	writeFile(t, filepath.Join(dir, "aarch64", "repodata", "repomd.xml"), []byte("<repomd/>"))
+	repo, err := Publish(context.Background(), srv.URL, account+".secret", dir, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo != "/"+account+"/"+id+"/" {
+		t.Fatalf("repo %q", repo)
+	}
+	if patches != 2 {
+		t.Fatalf("patches %d, want 2", patches)
 	}
 }
 
