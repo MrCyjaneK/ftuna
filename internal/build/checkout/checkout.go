@@ -14,12 +14,37 @@ import (
 	"strings"
 )
 
+// CacheDir is ~/.cache/ftuna/src/<id>, or $XDG_CACHE_HOME/ftuna/src/<id>.
+// The last element stays unique per recipe so sfosbuild image names do not collide.
+func CacheDir(id string) (string, error) {
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		base = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(base, "ftuna", "src", strings.ReplaceAll(id, "/", "_")), nil
+}
+
 func Prepare(ctx context.Context, url, commit, patchesDir, overlayDir, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	log.Printf("clone %s", url)
-	if _, err := git(ctx, "", "clone", url, dest); err != nil {
+	if _, err := os.Stat(filepath.Join(dest, ".git")); err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.RemoveAll(dest); err != nil {
+			return err
+		}
+		log.Printf("clone %s", url)
+		if _, err := git(ctx, "", "clone", url, dest); err != nil {
+			return err
+		}
+	}
+	if _, err := git(ctx, dest, "reset", "--hard"); err != nil {
 		return err
 	}
 	log.Printf("checkout %s", commit)

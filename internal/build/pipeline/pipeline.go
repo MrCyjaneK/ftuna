@@ -273,8 +273,9 @@ func One(ctx context.Context, version, name, id string) error {
 func buildAndQuery(ctx context.Context, r recipe.Recipe, version, work string) ([]deps.RPM, string, error) {
 	// Basename becomes the sfosbuild image name. A shared "src" would let the next
 	// recipe rebuild that image and drop libraries compiled by image hooks.
-	src := filepath.Join(work, strings.ReplaceAll(r.ID, "/", "_"))
-	if err := os.RemoveAll(src); err != nil {
+	// The tree stays in the cache; Prepare resets it instead of cloning again.
+	src, err := checkout.CacheDir(r.ID)
+	if err != nil {
 		return nil, "", err
 	}
 	if err := checkout.Prepare(ctx, r.URL, r.Commit, r.Patches, r.Overlay, src); err != nil {

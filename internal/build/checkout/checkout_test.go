@@ -112,6 +112,9 @@ func TestPrepareCommitsPatchesAndOverlay(t *testing.T) {
 	if err := Prepare(context.Background(), origin, commit, filepath.Join(recipe, "patches"), filepath.Join(recipe, "overlay"), dest); err != nil {
 		t.Fatal(err)
 	}
+	if err := Prepare(context.Background(), origin, commit, filepath.Join(recipe, "patches"), filepath.Join(recipe, "overlay"), dest); err != nil {
+		t.Fatal(err)
+	}
 	body, err := os.ReadFile(filepath.Join(dest, "README"))
 	if err != nil {
 		t.Fatal(err)
@@ -128,6 +131,19 @@ func TestPrepareCommitsPatchesAndOverlay(t *testing.T) {
 		if !strings.Contains(log, want) {
 			t.Fatalf("log missing %q:\n%s", want, log)
 		}
+	}
+}
+
+func TestCacheDir(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	got, err := CacheDir("github.com/sailfishos/gallery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(cache, "ftuna", "src", "github.com_sailfishos_gallery")
+	if got != want {
+		t.Fatalf("cache %s", got)
 	}
 }
 
