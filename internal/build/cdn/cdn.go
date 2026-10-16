@@ -32,13 +32,11 @@ type Asset struct {
 
 // ParseAsset checks a raw GitHub or OpenRepos file URL.
 func ParseAsset(raw string) (Asset, error) {
-	if p, err := originPath(OriginHost, raw, ""); err == nil {
-		return Asset{OriginHost, p}, nil
+	uri, err := url.Parse(raw)
+	if err != nil {
+		return Asset{}, fmt.Errorf("invalid URL %q", raw)
 	}
-	if p, err := originPath(OpenReposHost, raw, openReposRoot); err == nil {
-		return Asset{OpenReposHost, p}, nil
-	}
-	return Asset{}, fmt.Errorf("%q must be https://%s/... or https://%s%s...", raw, OriginHost, OpenReposHost, openReposRoot)
+	return Asset{uri.Host, uri.Path}, nil
 }
 
 // OriginPath checks a raw GitHub URL and returns its absolute path.

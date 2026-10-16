@@ -97,7 +97,7 @@ go run ./cmd/ftuna scratch register
 go run ./cmd/ftuna scratch publish <dir> <name>
 ```
 
-`all` publishes `repo/ftuna-oss/<version>/` and skips a recipe whose commit is already on S3. A single recipe takes a scratch name and publishes the RPMs it produced to `scratchpad-repo.ftuna.eu/<account>/<name>/`. Publishing that name again replaces the repo.
+`all` publishes `repo/ftuna-oss/<version>/` after each recipe, writes the signing key when it changed, and skips a recipe whose commit is already on S3. A stopped run keeps the packages already published. A single recipe takes a scratch name and publishes the RPMs it produced to `scratchpad-repo.ftuna.eu/<account>/<name>/`. Publishing that name again replaces the repo.
 
 ## Website
 

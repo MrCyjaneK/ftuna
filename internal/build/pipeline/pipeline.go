@@ -87,12 +87,23 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 			rewrite[arch] = true
 		}
 	}
+	entity, err := sign.EntityFromEnv()
+	if err != nil {
+		return err
+	}
+	keyOK, err := signingKeyCurrent(ctx, store, entity)
+	if err != nil {
+		return err
+	}
+	if !keyOK {
+		for _, arch := range arches {
+			rewrite[arch] = true
+		}
+		ready = false
+	}
 	if len(build) == 0 && len(removed) == 0 && ready {
 		log.Printf("already built %s", version)
 		return publishOSSInfo(ctx, store, recipesRoot, version, recipes, man)
-	}
-	if _, err := sign.EntityFromEnv(); err != nil {
-		return err
 	}
 	oldArches := manifestArches(man)
 	before := map[string]map[string]bool{}
@@ -143,19 +154,38 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 			}
 		}
 		noteBuilt(&doc, i, r, placed)
-		if err := putStatus(ctx, store, version, &doc); err != nil {
+		log.Printf("publish %s", r.ID)
+		if err := publishSnapshot(ctx, store, entity, version, work, recipesRoot, recipes, &man, before, local, rewrite, arches, &doc); err != nil {
 			return err
 		}
 	}
 	for _, name := range removed {
 		delete(man.Recipes, name)
 	}
-	entity, err := sign.EntityFromEnv()
-	if err != nil {
+	if err := publishSnapshot(ctx, store, entity, version, work, recipesRoot, recipes, &man, before, local, rewrite, arches, &doc); err != nil {
 		return err
 	}
+	keep := map[string]bool{}
 	for _, arch := range arches {
-		want := archFiles(man, arch)
+		keep[arch] = true
+	}
+	for _, arch := range oldArches {
+		if keep[arch] {
+			continue
+		}
+		if err := deletePrefix(ctx, store, ArchPrefix(version, arch)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// publishSnapshot writes the arches that changed, the signing key when its
+// armor differs from the object already stored, and the manifest. A later
+// run can skip recipes whose RPMs are already recorded there.
+func publishSnapshot(ctx context.Context, store *s3store.Store, entity *openpgp.Entity, version, work, recipesRoot string, recipes []recipe.Recipe, man *Manifest, before map[string]map[string]bool, local map[string]map[string]string, rewrite map[string]bool, arches []string, doc *Status) error {
+	for _, arch := range arches {
+		want := archFiles(*man, arch)
 		if len(want) == 0 {
 			log.Printf("%s %s has no rpms", version, arch)
 			continue
@@ -173,33 +203,46 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 		if err := publishArch(ctx, store, entity, version, arch, work, want, before[arch], local[arch]); err != nil {
 			return err
 		}
+		before[arch] = want
+		local[arch] = map[string]string{}
+		rewrite[arch] = false
 	}
-	keep := map[string]bool{}
-	for _, arch := range arches {
-		keep[arch] = true
+	if err := publishKey(ctx, store, entity); err != nil {
+		return err
 	}
-	for _, arch := range oldArches {
-		if keep[arch] {
-			continue
-		}
-		if err := deletePrefix(ctx, store, ArchPrefix(version, arch)); err != nil {
-			return err
-		}
+	if err := putManifest(ctx, store, version, *man); err != nil {
+		return err
+	}
+	if err := putStatus(ctx, store, version, doc); err != nil {
+		return err
+	}
+	return publishOSSInfo(ctx, store, recipesRoot, version, recipes, *man)
+}
+
+func signingKeyCurrent(ctx context.Context, store *s3store.Store, entity *openpgp.Entity) (bool, error) {
+	pub, err := sign.PublicArmor(entity)
+	if err != nil {
+		return false, err
+	}
+	body, ok, err := store.GetIfExists(ctx, PublicKey)
+	if err != nil {
+		return false, err
+	}
+	return ok && string(body) == pub, nil
+}
+
+func publishKey(ctx context.Context, store *s3store.Store, entity *openpgp.Entity) error {
+	ok, err := signingKeyCurrent(ctx, store, entity)
+	if err != nil || ok {
+		return err
 	}
 	pub, err := sign.PublicArmor(entity)
 	if err != nil {
 		return err
 	}
-	if _, err := store.PutBytes(ctx, PublicKey, "application/pgp-keys", []byte(pub), nil); err != nil {
-		return err
-	}
-	if err := putManifest(ctx, store, version, man); err != nil {
-		return err
-	}
-	if err := putStatus(ctx, store, version, &doc); err != nil {
-		return err
-	}
-	return publishOSSInfo(ctx, store, recipesRoot, version, recipes, man)
+	log.Printf("key https://repo-oss.ftuna.eu/ftuna-oss.key")
+	_, err = store.PutBytes(ctx, PublicKey, "application/pgp-keys", []byte(pub), nil)
+	return err
 }
 
 func One(ctx context.Context, version, name, id string) error {

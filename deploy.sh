@@ -16,12 +16,12 @@ export FTUNA_RATINGS
 export FTUNA_OSS_GPG_PRIVATE_KEY
 
 iter=0
-    echo '> ftuna 5.1.0.11 all'
-    $ftuna 5.1.0.11 all
-    exit $?
-while true; do
-    sleep 600
-    echo "Next run in 10 minutes"
+#    echo '> ftuna 5.1.0.11 all'
+#    $ftuna 5.1.0.11 all
+#    exit $?
+# while true; do
+#    sleep 600
+#    echo "Next run in 10 minutes"
     iter=$((iter + 1))
     echo '> ftuna 5.1.0.11 all'
     pushd "$FTUNA_RECIPES"
@@ -31,7 +31,7 @@ while true; do
     $ftuna 5.1.0.11 all
     echo "> ftuna scan $FTUNA_RATINGS"
     $ftuna scan "$FTUNA_RATINGS"
-    if (( iter % 6 == 0 )); then
+#    if (( iter % 6 == 0 )); then
         echo '> ftuna openrepos mirror --all'
         $ftuna openrepos mirror --all
         pushd "$FTUNA_RATINGS"
@@ -41,5 +41,5 @@ while true; do
                 git push
             fi
         popd
-    fi
-done
+#    fi
+# done
