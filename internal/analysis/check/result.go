@@ -16,8 +16,6 @@ type Result struct {
 	RPMVersion string  `json:"rpm_version"`
 	Release    string  `json:"release"`
 	Arch       string  `json:"arch"`
-	Verdict    int     `json:"verdict"`
-	Scores     []Score `json:"scores"`
 	Issues     []Issue `json:"issues"`
 }
 
@@ -31,9 +29,6 @@ func ObjectKey(sha256 string) string {
 func Encode(doc Result) ([]byte, error) {
 	if doc.Issues == nil {
 		doc.Issues = []Issue{}
-	}
-	if doc.Scores == nil {
-		doc.Scores = []Score{}
 	}
 	raw, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {

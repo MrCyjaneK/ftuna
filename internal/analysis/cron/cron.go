@@ -1,7 +1,7 @@
-// Package cron scores crontab, cron directory, and anacrontab entries.
-// A root job is 30. A named non-root job in a system table is 75.
-// A user spool runs at 85. The module score is the worst file.
-// A file with no jobs abstains. Each finding names the user and the command.
+// Package cron reports crontab, cron directory, and anacrontab entries.
+// A root job is red. A named non-root job in a system table is yellow.
+// A user spool is green. A file with no jobs abstains.
+// Each finding names the user and the command.
 package cron
 
 import (
@@ -12,12 +12,6 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-const (
-	scoreRoot  = 30
-	scoreUser  = 75
-	scoreSpool = 85
-)
-
 func init() { check.Register(module{}) }
 
 type module struct{}
@@ -25,20 +19,18 @@ type module struct{}
 func (module) Name() string { return "cron" }
 
 func (module) Analyze(files []check.File) check.Report {
-	score := check.Neutral
 	var issues []check.Issue
 	for _, f := range files {
 		if f.Kind != check.KindFile {
 			continue
 		}
-		points, detail, ok := fileScore(f)
+		color, detail, ok := fileFinding(f)
 		if !ok {
 			continue
 		}
-		issues = append(issues, check.Issue{Path: f.Path, Code: "cron", Detail: detail})
-		score = check.Worse(score, points)
+		issues = append(issues, check.Issue{Path: f.Path, Code: "cron", Detail: detail, Color: color})
 	}
-	return check.Report{Score: score, Issues: issues}
+	return check.Report{Issues: issues}
 }
 
 type job struct {
@@ -46,55 +38,55 @@ type job struct {
 	command string
 }
 
-func fileScore(f check.File) (int, string, bool) {
+func fileFinding(f check.File) (string, string, bool) {
 	switch classOf(f.Path) {
 	case "table":
 		jobs := cronJobs(f.Body, true)
 		if len(jobs) == 0 {
-			return 0, "", false
+			return "", "", false
 		}
-		return jobsScore(jobs, false), jobsDetail(jobs), true
+		return jobsColor(jobs, false), jobsDetail(jobs), true
 	case "periodic":
 		if !hasJob(f.Body) {
-			return 0, "", false
+			return "", "", false
 		}
 		detail := "user=root"
 		if interp := interpreter(f.Body); interp != "" {
 			detail += " interpreter=" + interp
 		}
-		return scoreRoot, detail, true
+		return check.ColorRed, detail, true
 	case "anacron":
 		jobs := anacronJobs(f.Body)
 		if len(jobs) == 0 {
-			return 0, "", false
+			return "", "", false
 		}
-		return scoreRoot, jobsDetail(jobs), true
+		return check.ColorRed, jobsDetail(jobs), true
 	case "spool":
 		jobs := cronJobs(f.Body, false)
 		if len(jobs) == 0 {
-			return 0, "", false
+			return "", "", false
 		}
 		user := path.Base(f.Path)
 		for i := range jobs {
 			jobs[i].user = user
 		}
-		return jobsScore(jobs, true), jobsDetail(jobs), true
+		return jobsColor(jobs, true), jobsDetail(jobs), true
 	default:
-		return 0, "", false
+		return "", "", false
 	}
 }
 
-func jobsScore(jobs []job, spool bool) int {
-	points := scoreUser
+func jobsColor(jobs []job, spool bool) string {
+	color := check.ColorYellow
 	if spool {
-		points = scoreSpool
+		color = check.ColorGreen
 	}
 	for _, item := range jobs {
 		if rootish(item.user) {
-			return scoreRoot
+			return check.ColorRed
 		}
 	}
-	return points
+	return color
 }
 
 func jobsDetail(jobs []job) string {

@@ -37,8 +37,8 @@ func TestGrants(t *testing.T) {
 			Body: []byte("return polkit.Result.AUTH_ADMIN;\n"),
 		},
 	})
-	if rep.Score != scoreAny || len(rep.Issues) != 3 {
-		t.Fatalf("%d %+v", rep.Score, rep.Issues)
+	if len(rep.Issues) != 3 || rep.Issues[0].Color != check.ColorRed || rep.Issues[1].Color != check.ColorRed || rep.Issues[2].Color != check.ColorRed {
+		t.Fatalf("%+v", rep.Issues)
 	}
 	if rep.Issues[0].Code != "polkit.policy" || rep.Issues[0].Detail != "org.demo.open allow_active=yes" {
 		t.Fatalf("policy %+v", rep.Issues[0])
@@ -55,10 +55,10 @@ func TestGrants(t *testing.T) {
 		Kind: check.KindFile,
 		Body: []byte("[Demo]\nResultAny=yes\nResultActive=yes\n"),
 	}})
-	if any.Score != scoreAny || any.Issues[0].Code != "polkit.pkla" || any.Issues[0].Detail != "ResultAny=yes" {
+	if len(any.Issues) != 1 || any.Issues[0].Color != check.ColorRed || any.Issues[0].Code != "polkit.pkla" || any.Issues[0].Detail != "ResultAny=yes" {
 		t.Fatalf("pkla %+v", any)
 	}
-	if got := m.Analyze(nil); got.Score != check.Neutral {
+	if got := m.Analyze(nil); len(got.Issues) != 0 {
 		t.Fatalf("none %+v", got)
 	}
 }

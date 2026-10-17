@@ -79,12 +79,12 @@ func TestAnalyzeSample(t *testing.T) {
 		"systemd systemd.service":      1,
 		"ftuna ftuna.built":            1,
 	}
-	byScore := map[string]int{}
-	for _, s := range doc.Scores {
-		byScore[s.Module] = s.Score
+	byColor := map[string]string{}
+	for _, issue := range doc.Issues {
+		byColor[issue.Module+" "+issue.Code] = issue.Color
 	}
-	if byScore["setuid"] != 0 || byScore["sailjail"] != 100 || byScore["systemd"] != 30 || byScore["scriptlet"] != 30 || byScore["ftuna"] != 50 || doc.Verdict != 42 {
-		t.Fatalf("scores %v verdict %d", byScore, doc.Verdict)
+	if byColor["setuid setuid"] != check.ColorRed || byColor["sailjail sailjail.permission"] != check.ColorGray || byColor["systemd systemd.service"] != check.ColorRed || byColor["scriptlet scriptlet"] != check.ColorRed || byColor["ftuna ftuna.built"] != check.ColorYellow {
+		t.Fatalf("colors %v", byColor)
 	}
 	for key, n := range want {
 		if codes[key] != n {
@@ -112,7 +112,7 @@ func TestAnalyzeUnreadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc.Key == "" || len(doc.Issues) != 1 || doc.Issues[0].Code != "rpm.read" || doc.Issues[0].Detail == "" || doc.Verdict != check.Neutral {
+	if doc.Key == "" || len(doc.Issues) != 1 || doc.Issues[0].Code != "rpm.read" || doc.Issues[0].Detail == "" || doc.Issues[0].Color != check.ColorGray {
 		t.Fatalf("%+v", doc)
 	}
 	if doc.Issues[0].Module != "rpm" || doc.Issues[0].Path != doc.Key {

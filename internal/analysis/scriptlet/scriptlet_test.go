@@ -14,8 +14,8 @@ func TestScripts(t *testing.T) {
 		{Path: "%pre", Kind: check.KindScriptlet, Program: "/bin/sh", Body: []byte("# only a comment\n")},
 		{Path: "/usr/bin/demo", Kind: check.KindFile, Body: []byte("echo no\n")},
 	})
-	if rep.Score != scoreRoot || len(rep.Issues) != 2 {
-		t.Fatalf("%d %+v", rep.Score, rep.Issues)
+	if len(rep.Issues) != 2 || rep.Issues[0].Color != check.ColorRed || rep.Issues[1].Color != check.ColorGreen {
+		t.Fatalf("%+v", rep.Issues)
 	}
 	if rep.Issues[0].Detail != "user=root program=/bin/sh body=echo post" {
 		t.Fatalf("post %+v", rep.Issues[0])
@@ -24,14 +24,14 @@ func TestScripts(t *testing.T) {
 		t.Fatalf("helper %+v", rep.Issues[1])
 	}
 	helper := m.Analyze([]check.File{{Path: "%post", Kind: check.KindScriptlet, Program: "/sbin/ldconfig"}})
-	if helper.Score != scoreHelper {
+	if len(helper.Issues) != 1 || helper.Issues[0].Color != check.ColorGreen {
 		t.Fatalf("ldconfig %+v", helper)
 	}
 	odd := m.Analyze([]check.File{{Path: "%post", Kind: check.KindScriptlet, Program: "/usr/bin/demo"}})
-	if odd.Score != scoreRoot || odd.Issues[0].Detail != "user=root program=/usr/bin/demo" {
+	if len(odd.Issues) != 1 || odd.Issues[0].Color != check.ColorRed || odd.Issues[0].Detail != "user=root program=/usr/bin/demo" {
 		t.Fatalf("odd %+v", odd)
 	}
-	if got := m.Analyze(nil); got.Score != check.Neutral {
+	if got := m.Analyze(nil); len(got.Issues) != 0 {
 		t.Fatalf("none %+v", got)
 	}
 }

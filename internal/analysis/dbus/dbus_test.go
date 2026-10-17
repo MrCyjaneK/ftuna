@@ -33,8 +33,8 @@ func TestServiceAndPolicy(t *testing.T) {
 			Body: []byte(`<busconfig><policy context="default"><allow own="*" eavesdrop="true"/></policy></busconfig>`),
 		},
 	})
-	if rep.Score != scoreWild || len(rep.Issues) != 3 {
-		t.Fatalf("%d %+v", rep.Score, rep.Issues)
+	if len(rep.Issues) != 3 || rep.Issues[0].Color != check.ColorYellow || rep.Issues[1].Color != check.ColorGreen || rep.Issues[2].Color != check.ColorRed {
+		t.Fatalf("%+v", rep.Issues)
 	}
 	if rep.Issues[0].Code != "dbus.service" || rep.Issues[0].Detail != "scope=system user=nemo exec=/usr/bin/demo" {
 		t.Fatalf("service %+v", rep.Issues[0])
@@ -51,7 +51,7 @@ func TestServiceAndPolicy(t *testing.T) {
 		Kind: check.KindFile,
 		Body: []byte("[D-BUS Service]\nExec=/usr/bin/demo\n"),
 	}})
-	if root.Score != scoreRoot || root.Issues[0].Detail != "scope=system user=root exec=/usr/bin/demo" {
+	if len(root.Issues) != 1 || root.Issues[0].Color != check.ColorRed || root.Issues[0].Detail != "scope=system user=root exec=/usr/bin/demo" {
 		t.Fatalf("root %+v", root)
 	}
 	own := m.Analyze([]check.File{{
@@ -59,10 +59,10 @@ func TestServiceAndPolicy(t *testing.T) {
 		Kind: check.KindFile,
 		Body: []byte(`<busconfig><policy user="*"><allow own="org.demo"/></policy></busconfig>`),
 	}})
-	if own.Score != scoreOwn || own.Issues[0].Detail != "user=* own" {
+	if len(own.Issues) != 1 || own.Issues[0].Color != check.ColorRed || own.Issues[0].Detail != "user=* own" {
 		t.Fatalf("own %+v", own)
 	}
-	if got := m.Analyze(nil); got.Score != check.Neutral {
+	if got := m.Analyze(nil); len(got.Issues) != 0 {
 		t.Fatalf("none %+v", got)
 	}
 }

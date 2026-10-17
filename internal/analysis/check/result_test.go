@@ -9,9 +9,9 @@ func TestEncodeRoundTrip(t *testing.T) {
 	raw, err := Encode(Result{
 		Version: Version, SHA256: "abc", Key: "repo/ftuna-oss/a.rpm",
 		Name: "demo", RPMVersion: "1.0", Release: "1", Arch: "aarch64",
-		Verdict: 40,
-		Scores:  []Score{{Module: "setuid", Score: 0}, {Module: "sailjail", Score: Neutral}},
-		Issues:  []Issue{{Module: "setuid", Path: "/usr/bin/demo", Code: "setuid", Detail: "mode"}},
+		Issues: []Issue{{
+			Module: "setuid", Path: "/usr/bin/demo", Code: "setuid", Detail: "mode", Color: ColorRed,
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -23,15 +23,22 @@ func TestEncodeRoundTrip(t *testing.T) {
 	if _, ok := doc["score"]; ok {
 		t.Fatalf("score stored in %s", raw)
 	}
+	if _, ok := doc["verdict"]; ok {
+		t.Fatalf("verdict stored in %s", raw)
+	}
+	if _, ok := doc["scores"]; ok {
+		t.Fatalf("scores stored in %s", raw)
+	}
 	if doc["version"].(float64) != float64(Version) || doc["rpm_version"] != "1.0" || doc["sha256"] != "abc" {
 		t.Fatalf("%s", raw)
 	}
-	if doc["verdict"].(float64) != 40 {
-		t.Fatalf("verdict %s", raw)
+	issues, _ := doc["issues"].([]any)
+	if len(issues) != 1 {
+		t.Fatalf("issues %s", raw)
 	}
-	scores, _ := doc["scores"].([]any)
-	if len(scores) != 2 {
-		t.Fatalf("scores %s", raw)
+	row := issues[0].(map[string]any)
+	if row["color"] != ColorRed {
+		t.Fatalf("color %s", raw)
 	}
 	const sha = "aabbccddeeff00112233445566778899"
 	if ObjectKey(sha) != "aa/bb/cc/"+sha+".json" {
@@ -48,31 +55,22 @@ func TestEncodeEmptyIssues(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
-	if doc.Issues == nil || len(doc.Issues) != 0 || doc.Scores == nil || len(doc.Scores) != 0 {
+	if doc.Issues == nil || len(doc.Issues) != 0 {
 		t.Fatalf("%s", raw)
 	}
 }
 
-func TestVerdict(t *testing.T) {
-	if got := Verdict(nil); got != Neutral {
-		t.Fatalf("empty %d", got)
+func TestWorseColor(t *testing.T) {
+	if got := WorseColor("", ColorYellow); got != ColorYellow {
+		t.Fatalf("empty %s", got)
 	}
-	if got := Verdict([]Score{{Module: "a", Score: Neutral}, {Module: "b", Score: Neutral}}); got != Neutral {
-		t.Fatalf("abstain %d", got)
+	if got := WorseColor(ColorGreen, ColorRed); got != ColorRed {
+		t.Fatalf("red %s", got)
 	}
-	if got := Verdict([]Score{{Module: "a", Score: Neutral}, {Module: "b", Score: 0}, {Module: "c", Score: 100}}); got != 50 {
-		t.Fatalf("ends %d", got)
+	if got := WorseColor(ColorRed, ColorYellow); got != ColorRed {
+		t.Fatalf("keep %s", got)
 	}
-	if got := Verdict([]Score{{Module: "a", Score: 30}, {Module: "b", Score: 80}}); got != 55 {
-		t.Fatalf("mid %d", got)
-	}
-	if got := Verdict([]Score{{Module: "a", Score: 1}, {Module: "b", Score: 2}}); got != 2 {
-		t.Fatalf("half %d", got)
-	}
-	if got := Worse(Neutral, 40); got != 40 {
-		t.Fatalf("neutral %d", got)
-	}
-	if got := Worse(80, 30); got != 30 {
-		t.Fatalf("worse %d", got)
+	if got := WorseColor(ColorGray, ColorGreen); got != ColorGreen {
+		t.Fatalf("green %s", got)
 	}
 }

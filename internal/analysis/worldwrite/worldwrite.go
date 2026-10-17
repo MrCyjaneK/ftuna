@@ -1,8 +1,8 @@
-// Package worldwrite scores files and directories that other users can write.
-// Every such entry scores 0. The finding still says whether it is a
+// Package worldwrite reports files and directories that other users can write.
+// Every such entry is red. The finding still says whether it is a
 // directory, a sticky directory, an executable, or a plain file.
 // Symlinks are skipped: their mode does not describe the target.
-// The module score is 0 when any entry matches. A package with none abstains.
+// A package with none abstains.
 package worldwrite
 
 import (
@@ -24,7 +24,6 @@ type module struct{}
 func (module) Name() string { return "worldwrite" }
 
 func (module) Analyze(files []check.File) check.Report {
-	score := check.Neutral
 	var issues []check.Issue
 	for _, f := range files {
 		if f.Kind == check.KindSymlink || f.Kind == check.KindScriptlet || f.Mode&otherWrite == 0 {
@@ -34,10 +33,10 @@ func (module) Analyze(files []check.File) check.Report {
 			Path:   f.Path,
 			Code:   "worldwrite",
 			Detail: fmt.Sprintf("%s mode %#o user %s group %s %s", f.Path, f.Mode, f.User, f.Group, kindOf(f)),
+			Color:  check.ColorRed,
 		})
-		score = 0
 	}
-	return check.Report{Score: score, Issues: issues}
+	return check.Report{Issues: issues}
 }
 
 func kindOf(f check.File) string {

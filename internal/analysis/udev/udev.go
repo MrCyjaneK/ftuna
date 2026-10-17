@@ -1,9 +1,8 @@
-// Package udev scores udev rules that run a program or open a device node
+// Package udev reports udev rules that run a program or open a device node
 // to every user. udev runs as root. An external program, including
-// PROGRAM and IMPORT{program}, scores 30. A udev builtin is udev's own
-// command, so it is not a finding. MODE that grants other-write scores 15.
+// PROGRAM and IMPORT{program}, is red. A udev builtin is udev's own
+// command, so it is not a finding. MODE that grants other-write is red.
 // A rules file that only sets ownership or a private mode abstains.
-// The module score is the worst hit.
 package udev
 
 import (
@@ -13,11 +12,6 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-const (
-	scoreProgram = 30
-	scoreMode    = 15
-)
-
 func init() { check.Register(module{}) }
 
 type module struct{}
@@ -25,7 +19,6 @@ type module struct{}
 func (module) Name() string { return "udev" }
 
 func (module) Analyze(files []check.File) check.Report {
-	score := check.Neutral
 	var issues []check.Issue
 	for _, f := range files {
 		if f.Kind != check.KindFile || !isRules(f.Path) {
@@ -35,19 +28,16 @@ func (module) Analyze(files []check.File) check.Report {
 			if run.builtin {
 				continue
 			}
-			points := scoreProgram
 			code := "udev.run"
 			detail := "user=root program=" + run.command
 			if run.mode {
-				points = scoreMode
 				code = "udev.mode"
 				detail = "user=root mode=" + run.command
 			}
-			issues = append(issues, check.Issue{Path: f.Path, Code: code, Detail: detail})
-			score = check.Worse(score, points)
+			issues = append(issues, check.Issue{Path: f.Path, Code: code, Detail: detail, Color: check.ColorRed})
 		}
 	}
-	return check.Report{Score: score, Issues: issues}
+	return check.Report{Issues: issues}
 }
 
 func isRules(name string) bool {

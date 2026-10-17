@@ -257,18 +257,12 @@ func Analyze(key, sha string, body []byte) (check.Result, error) {
 			Path:   key,
 			Code:   "rpm.read",
 			Detail: err.Error(),
+			Color:  check.ColorGray,
 		}}
-		score, extra := ftuna.Check(key, ftuna.RecipesDir())
-		doc.Scores = []check.Score{{Module: "ftuna", Score: score}}
-		doc.Issues = append(doc.Issues, extra...)
-		doc.Verdict = check.Verdict(doc.Scores)
+		doc.Issues = append(doc.Issues, ftuna.Check(key, ftuna.RecipesDir())...)
 		return doc, nil
 	}
-	scores, issues := check.Apply(files)
-	score, extra := ftuna.Check(key, ftuna.RecipesDir())
-	scores = append(scores, check.Score{Module: "ftuna", Score: score})
-	doc.Scores = scores
-	doc.Issues = append(issues, extra...)
-	doc.Verdict = check.Verdict(scores)
+	doc.Issues = check.Apply(files)
+	doc.Issues = append(doc.Issues, ftuna.Check(key, ftuna.RecipesDir())...)
 	return doc, nil
 }

@@ -1,9 +1,7 @@
-// Package systemd scores service, timer, socket, and path units shipped in
-// a package. The module score is the least contained unit. A unit file by
-// itself is not a penalty: the score follows the scope, the user and group
-// it runs as, and the sandbox settings that are actually turned on.
-// Socket, path, and timer units use one scale. When the unit they activate
-// is in the package, that service's score is the one that counts.
+// Package systemd reports service, timer, socket, and path units shipped in
+// a package. A unit is red, yellow, or green from its scope, the user and
+// group it runs as, and the sandbox settings that are actually turned on.
+// Socket, path, and timer units are judged on their own.
 package systemd
 
 import (
@@ -23,34 +21,26 @@ func (module) Name() string { return "systemd" }
 func (module) Analyze(files []check.File) check.Report {
 	units := collect(files)
 	if len(units) == 0 {
-		return check.Report{Score: check.Neutral}
+		return check.Report{}
 	}
 	sort.Slice(units, func(i, j int) bool { return units[i].path < units[j].path })
-	worst := check.Neutral
 	var issues []check.Issue
 	for _, unit := range units {
-		scored := unit.scored
 		issues = append(issues, check.Issue{
 			Path:   unit.path,
 			Code:   unit.code,
 			Detail: unit.detail,
+			Color:  unit.color,
 		})
-		if !scored {
-			continue
-		}
-		if worst < 0 || unit.score < worst {
-			worst = unit.score
-		}
 	}
-	return check.Report{Score: worst, Issues: issues}
+	return check.Report{Issues: issues}
 }
 
 type found struct {
 	path   string
 	code   string
 	detail string
-	score  int
-	scored bool
+	color  string
 }
 
 type identity struct {
@@ -99,15 +89,9 @@ func collect(files []check.File) []found {
 			b.link = &cp
 		}
 	}
-	known := map[string]bool{}
-	for key, b := range grouped {
-		if strings.HasSuffix(b.identity().name, ".service") {
-			known[key] = true
-		}
-	}
 	var out []found
 	for _, key := range order {
-		if unit, ok := grouped[key].judge(known); ok {
+		if unit, ok := grouped[key].judge(); ok {
 			out = append(out, unit)
 		}
 	}
@@ -162,20 +146,19 @@ func isUnit(name string) bool {
 		strings.HasSuffix(name, ".socket") || strings.HasSuffix(name, ".path")
 }
 
-func (b *bundle) judge(known map[string]bool) (found, bool) {
+func (b *bundle) judge() (found, bool) {
 	if b.main == nil && len(b.drops) == 0 && b.link == nil {
 		return found{}, false
 	}
 	if b.main == nil && len(b.drops) == 0 {
-		return b.linkOnly(known), true
+		return b.linkOnly(), true
 	}
 	text := b.merged()
 	id := b.identity()
 	unitPath := b.issuePath()
 	if code, ok := activationCode(id.name); ok {
 		target := activationTarget(id.name, parseUnit(text))
-		_, seen := known[id.scope+"/"+target]
-		return judgeActivation(id, unitPath, code, target, seen), true
+		return judgeActivation(id, unitPath, code, target), true
 	}
 	return judgeService(id, unitPath, text, true), true
 }
@@ -216,12 +199,11 @@ func (b *bundle) merged() []byte {
 	return joinLines(parts)
 }
 
-func (b *bundle) linkOnly(known map[string]bool) found {
+func (b *bundle) linkOnly() found {
 	id := b.link.id
 	if code, ok := activationCode(id.name); ok {
 		target := activationTarget(id.name, parseUnit(nil))
-		_, seen := known[id.scope+"/"+target]
-		return judgeActivation(id, b.link.path, code, target, seen)
+		return judgeActivation(id, b.link.path, code, target)
 	}
 	return judgeService(id, b.link.path, nil, false)
 }

@@ -25,14 +25,11 @@ func TestCheck(t *testing.T) {
 	}
 
 	appKey := "repo/ftuna-oss/5.1.0.11/aarch64/github.com/example/app/app-1.aarch64.rpm"
-	score, got := Check(appKey, root)
-	if score != scoreHooks {
-		t.Fatalf("score %d", score)
-	}
-	if len(got) != 2 || got[0].Code != "ftuna.built" || got[0].Detail != "hooks" || got[0].Module != "ftuna" {
+	got := Check(appKey, root)
+	if len(got) != 2 || got[0].Code != "ftuna.built" || got[0].Detail != "hooks" || got[0].Color != check.ColorRed || got[0].Module != "ftuna" {
 		t.Fatalf("%+v", got)
 	}
-	if got[1].Code != "ftuna.image" || got[1].Detail != "20-tdlib.sh\n23-rust.sh\nnotes.txt" {
+	if got[1].Code != "ftuna.image" || got[1].Color != check.ColorRed || got[1].Detail != "20-tdlib.sh\n23-rust.sh\nnotes.txt" {
 		t.Fatalf("%+v", got[1])
 	}
 	if got[0].Path != "github.com/example/app" {
@@ -40,23 +37,23 @@ func TestCheck(t *testing.T) {
 	}
 
 	cleanKey := "scratch/20260102T150405Z-abcd/aarch64/github.com/example/clean/app-1.aarch64.rpm"
-	score, got = Check(cleanKey, root)
-	if score != scoreClean || len(got) != 1 || got[0].Code != "ftuna.built" || got[0].Detail != "clean" {
-		t.Fatalf("%d %+v", score, got)
+	got = Check(cleanKey, root)
+	if len(got) != 1 || got[0].Code != "ftuna.built" || got[0].Detail != "clean" || got[0].Color != check.ColorGreen {
+		t.Fatalf("%+v", got)
 	}
 
-	if score, got := Check("mirror/chum/obs/app.rpm", root); score != check.Neutral || got != nil {
-		t.Fatalf("%d %+v", score, got)
+	if got := Check("mirror/chum/obs/app.rpm", root); got != nil {
+		t.Fatalf("%+v", got)
 	}
 	missing := "repo/ftuna-oss/5.1.0.11/aarch64/github.com/missing/app/app.rpm"
-	score, got = Check(missing, root)
-	if score != scoreUnknown || len(got) != 1 || got[0].Detail != "unknown" {
-		t.Fatalf("%d %+v", score, got)
+	got = Check(missing, root)
+	if len(got) != 1 || got[0].Detail != "unknown" || got[0].Color != check.ColorYellow {
+		t.Fatalf("%+v", got)
 	}
 	escaped := "repo/ftuna-oss/5.1.0.11/aarch64/../../secret/app.rpm"
-	score, got = Check(escaped, root)
-	if score != scoreUnknown || len(got) != 1 || got[0].Detail != "unknown" || got[0].Path != escaped {
-		t.Fatalf("%d %+v", score, got)
+	got = Check(escaped, root)
+	if len(got) != 1 || got[0].Detail != "unknown" || got[0].Color != check.ColorYellow || got[0].Path != escaped {
+		t.Fatalf("%+v", got)
 	}
 	if _, err := os.Stat(filepath.Join(root, "secret")); !os.IsNotExist(err) {
 		t.Fatal("path escaped recipes root")

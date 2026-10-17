@@ -1,9 +1,8 @@
-// Package polkit scores rules that grant an action without authentication.
-// allow_any and allow_inactive score 10. allow_active scores 25. An action
-// that still asks for auth_admin is not a finding. A JavaScript rule that
-// returns Result.YES scores 10, and the finding is that line. A pkla
-// finding includes the Identity when the section has one. The module
-// score is the worst grant in the package.
+// Package polkit reports rules that grant an action without authentication.
+// allow_any, allow_inactive, allow_active, a JavaScript Result.YES, and a
+// pkla ResultAny, ResultInactive, or ResultActive are red. An action that
+// still asks for auth_admin is not a finding. A pkla finding includes the
+// Identity when the section has one.
 package polkit
 
 import (
@@ -17,11 +16,6 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-const (
-	scoreAny    = 10
-	scoreActive = 25
-)
-
 func init() { check.Register(module{}) }
 
 type module struct{}
@@ -29,24 +23,22 @@ type module struct{}
 func (module) Name() string { return "polkit" }
 
 func (module) Analyze(files []check.File) check.Report {
-	score := check.Neutral
 	var issues []check.Issue
 	for _, f := range files {
 		if f.Kind != check.KindFile {
 			continue
 		}
-		var points int
 		var detail, code string
 		var ok bool
 		switch kindOf(f.Path) {
 		case "policy":
-			points, detail, ok = policyScore(f.Body)
+			detail, ok = policyFinding(f.Body)
 			code = "polkit.policy"
 		case "rules":
-			points, detail, ok = rulesScore(f.Body)
+			detail, ok = rulesFinding(f.Body)
 			code = "polkit.rules"
 		case "pkla":
-			points, detail, ok = pklaScore(f.Body)
+			detail, ok = pklaFinding(f.Body)
 			code = "polkit.pkla"
 		default:
 			continue
@@ -54,10 +46,9 @@ func (module) Analyze(files []check.File) check.Report {
 		if !ok {
 			continue
 		}
-		issues = append(issues, check.Issue{Path: f.Path, Code: code, Detail: detail})
-		score = check.Worse(score, points)
+		issues = append(issues, check.Issue{Path: f.Path, Code: code, Detail: detail, Color: check.ColorRed})
 	}
-	return check.Report{Score: score, Issues: issues}
+	return check.Report{Issues: issues}
 }
 
 func kindOf(name string) string {
@@ -73,31 +64,30 @@ func kindOf(name string) string {
 	}
 }
 
-func policyScore(body []byte) (int, string, bool) {
+func policyFinding(body []byte) (string, bool) {
 	dec := xml.NewDecoder(bytes.NewReader(body))
 	var action, field string
 	inDefaults := false
 	var text strings.Builder
-	score := check.Neutral
+	found := false
+	broad := false
 	detail := ""
 	consider := func() {
 		if field == "" {
 			return
 		}
-		label, ok := yesScore(field, text.String())
+		label, ok := yesGrant(field, text.String())
 		text.Reset()
 		field = ""
 		if !ok {
 			return
 		}
-		points := scoreActive
-		if label == "allow_any=yes" || label == "allow_inactive=yes" {
-			points = scoreAny
-		}
-		if score < 0 || points < score {
+		wider := label == "allow_any=yes" || label == "allow_inactive=yes"
+		if !found || (wider && !broad) {
 			detail = strings.TrimSpace(action + " " + label)
+			broad = wider
 		}
-		score = check.Worse(score, points)
+		found = true
 	}
 	for {
 		tok, err := dec.Token()
@@ -135,20 +125,20 @@ func policyScore(body []byte) (int, string, bool) {
 			}
 		}
 	}
-	if score < 0 {
-		return 0, "", false
+	if !found {
+		return "", false
 	}
-	return score, detail, true
+	return detail, true
 }
 
-func yesScore(field, raw string) (string, bool) {
+func yesGrant(field, raw string) (string, bool) {
 	if !strings.EqualFold(strings.TrimSpace(raw), "yes") {
 		return "", false
 	}
 	return field + "=yes", true
 }
 
-func rulesScore(body []byte) (int, string, bool) {
+func rulesFinding(body []byte) (string, bool) {
 	sc := bufio.NewScanner(bytes.NewReader(body))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -156,14 +146,15 @@ func rulesScore(body []byte) (int, string, bool) {
 			continue
 		}
 		if strings.Contains(line, "Result.YES") {
-			return scoreAny, trimDetail(line), true
+			return trimDetail(line), true
 		}
 	}
-	return 0, "", false
+	return "", false
 }
 
-func pklaScore(body []byte) (int, string, bool) {
-	score := check.Neutral
+func pklaFinding(body []byte) (string, bool) {
+	found := false
+	broad := false
 	detail := ""
 	identity := ""
 	sc := bufio.NewScanner(bytes.NewReader(body))
@@ -189,26 +180,27 @@ func pklaScore(body []byte) (int, string, bool) {
 		if !strings.EqualFold(val, "yes") {
 			continue
 		}
-		points := scoreActive
+		wider := false
 		switch key {
 		case "ResultAny", "ResultInactive":
-			points = scoreAny
+			wider = true
 		case "ResultActive":
 		default:
 			continue
 		}
-		if score < 0 || points < score {
+		if !found || (wider && !broad) {
 			detail = key + "=yes"
 			if identity != "" {
 				detail = "Identity=" + identity + " " + detail
 			}
+			broad = wider
 		}
-		score = check.Worse(score, points)
+		found = true
 	}
-	if score < 0 {
-		return 0, "", false
+	if !found {
+		return "", false
 	}
-	return score, detail, true
+	return detail, true
 }
 
 func trimDetail(line string) string {

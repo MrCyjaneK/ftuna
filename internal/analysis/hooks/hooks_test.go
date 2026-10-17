@@ -19,8 +19,8 @@ func TestPaths(t *testing.T) {
 		{Path: "/usr/bin/demo", Kind: check.KindFile, Mode: 0100755, User: "root", Group: "root"},
 		{Path: "/etc/pam.d", Kind: check.KindDir, Mode: 040755, User: "root", Group: "root"},
 	})
-	if rep.Score != scoreLinker || len(rep.Issues) != 7 {
-		t.Fatalf("%d %+v", rep.Score, rep.Issues)
+	if len(rep.Issues) != 7 {
+		t.Fatalf("%+v", rep.Issues)
 	}
 	byPath := map[string]check.Issue{}
 	for _, issue := range rep.Issues {
@@ -35,8 +35,11 @@ func TestPaths(t *testing.T) {
 	if byPath["/usr/lib/systemd/system-generators/demo"].Detail != "scope=system mode 0100755 user root group root" {
 		t.Fatalf("generator %+v", byPath["/usr/lib/systemd/system-generators/demo"])
 	}
-	if byPath["/usr/lib/systemd/user-generators/demo"].Detail != "scope=user mode 0100755 user nemo group nemo" {
+	if byPath["/usr/lib/systemd/user-generators/demo"].Detail != "scope=user mode 0100755 user nemo group nemo" || byPath["/usr/lib/systemd/user-generators/demo"].Color != check.ColorYellow {
 		t.Fatalf("user generator %+v", byPath["/usr/lib/systemd/user-generators/demo"])
+	}
+	if byPath["/etc/ld.so.preload"].Color != check.ColorRed || byPath["/usr/lib/systemd/system-generators/demo"].Color != check.ColorRed {
+		t.Fatalf("colors %+v", byPath)
 	}
 	if byPath["/dev/demo"].Code != "hooks.device" {
 		t.Fatalf("device %+v", byPath["/dev/demo"])
@@ -44,10 +47,10 @@ func TestPaths(t *testing.T) {
 	user := m.Analyze([]check.File{{
 		Path: "/usr/lib/systemd/user-generators/demo", Kind: check.KindFile, Mode: 0100755, User: "nemo", Group: "nemo",
 	}})
-	if user.Score != scoreUserGen {
-		t.Fatalf("user %d", user.Score)
+	if len(user.Issues) != 1 || user.Issues[0].Color != check.ColorYellow {
+		t.Fatalf("user %+v", user)
 	}
-	if got := m.Analyze(nil); got.Score != check.Neutral {
+	if got := m.Analyze(nil); len(got.Issues) != 0 {
 		t.Fatalf("none %+v", got)
 	}
 }

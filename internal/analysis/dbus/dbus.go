@@ -1,9 +1,9 @@
-// Package dbus scores bus activators and bus policies.
-// A system service with no User= runs as root and scores 30. Another User=
-// scores 75. A session service runs as the session user and scores 85,
-// unless it explicitly sets User=root. A policy is scored when it grants a
-// wildcard or lets a broad context own a name. Session-bus policy is a
-// user bus, so it cannot score below 70. The module score is the worst.
+// Package dbus reports bus activators and bus policies.
+// A system service with no User= runs as root and is red. Another User=
+// is yellow. A session service runs as the session user and is green,
+// unless it explicitly sets User=root, which is red. A policy is reported
+// when it grants a wildcard or lets a broad context own a name. A system
+// policy is red. A session-bus policy is yellow.
 package dbus
 
 import (
@@ -18,16 +18,6 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-const (
-	scoreRoot          = 30
-	scoreUser          = 75
-	scoreSession       = 85
-	scoreSessionPolicy = 70
-	scoreWild          = 15
-	scoreOwn           = 20
-	scoreBad           = 40
-)
-
 func init() { check.Register(module{}) }
 
 type module struct{}
@@ -35,7 +25,6 @@ type module struct{}
 func (module) Name() string { return "dbus" }
 
 func (module) Analyze(files []check.File) check.Report {
-	score := check.Neutral
 	var issues []check.Issue
 	for _, f := range files {
 		if f.Kind != check.KindFile {
@@ -46,19 +35,19 @@ func (module) Analyze(files []check.File) check.Report {
 		case "service", "session-service":
 			user, exec, systemd, explicit := serviceAccount(f.Body)
 			scope := "system"
-			points := scoreRoot
+			color := check.ColorRed
 			if kind == "session-service" {
 				scope = "session"
 				if !explicit {
 					user = "session"
 				}
-				points = scoreSession
+				color = check.ColorGreen
 			}
 			if user != "root" && user != "0" && scope == "system" {
-				points = scoreUser
+				color = check.ColorYellow
 			}
 			if (user == "root" || user == "0") && explicit {
-				points = scoreRoot
+				color = check.ColorRed
 			}
 			if exec == "" {
 				exec = "unknown"
@@ -71,21 +60,21 @@ func (module) Analyze(files []check.File) check.Report {
 				Path:   f.Path,
 				Code:   "dbus.service",
 				Detail: detail,
+				Color:  color,
 			})
-			score = check.Worse(score, points)
 		case "policy", "session-policy":
-			points, detail, ok := policyScore(f.Body)
+			detail, ok := policyFinding(f.Body)
 			if !ok {
 				continue
 			}
-			if kind == "session-policy" && points < scoreSessionPolicy {
-				points = scoreSessionPolicy
+			color := check.ColorRed
+			if kind == "session-policy" {
+				color = check.ColorYellow
 			}
-			issues = append(issues, check.Issue{Path: f.Path, Code: "dbus.policy", Detail: detail})
-			score = check.Worse(score, points)
+			issues = append(issues, check.Issue{Path: f.Path, Code: "dbus.policy", Detail: detail, Color: color})
 		}
 	}
-	return check.Report{Score: score, Issues: issues}
+	return check.Report{Issues: issues}
 }
 
 func kindOf(name string) string {
@@ -138,7 +127,7 @@ func serviceAccount(body []byte) (user, exec, systemd string, explicit bool) {
 	return user, exec, systemd, explicit
 }
 
-func policyScore(body []byte) (int, string, bool) {
+func policyFinding(body []byte) (string, bool) {
 	dec := xml.NewDecoder(bytes.NewReader(body))
 	var user, group, context string
 	inPolicy := false
@@ -151,7 +140,7 @@ func policyScore(body []byte) (int, string, bool) {
 		}
 		if err != nil {
 			if !parsed {
-				return scoreBad, "unparsed", true
+				return "unparsed", true
 			}
 			break
 		}
@@ -177,20 +166,14 @@ func policyScore(body []byte) (int, string, bool) {
 		}
 	}
 	if len(grants) == 0 {
-		return 0, "", false
+		return "", false
 	}
 	names := make([]string, 0, len(grants))
 	for name := range grants {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	points := scoreOwn
-	for _, name := range names {
-		if strings.HasSuffix(name, "=*") || name == "eavesdrop" {
-			points = scoreWild
-		}
-	}
-	return points, strings.Join(names, " "), true
+	return strings.Join(names, " "), true
 }
 
 func noteAllow(grants map[string]bool, user, group, context string, el xml.StartElement) {

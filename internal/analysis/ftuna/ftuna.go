@@ -15,46 +15,43 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-const (
-	scoreClean   = 100
-	scoreHooks   = 45
-	scoreUnknown = 50
-)
-
 // Check inspects the object key. Packages outside repo/ftuna-oss/ and scratch/
 // abstain. Detail on ftuna.built is clean, hooks, or unknown.
 // ftuna.image lists .sfosbuild/image entry names, one per line.
-// The score is 100 for a recipe with no image hooks, 45 when hooks are
-// present, and 50 when the recipe cannot be read.
-func Check(key, recipesRoot string) (int, []check.Issue) {
+// A recipe with no image hooks is green. Hooks are red. A recipe that
+// cannot be read is yellow.
+func Check(key, recipesRoot string) []check.Issue {
 	id, built := recipeID(key)
 	if !built {
-		return check.Neutral, nil
+		return nil
 	}
-	builtIssue := check.Issue{Module: "ftuna", Path: key, Code: "ftuna.built", Detail: "unknown"}
+	builtIssue := check.Issue{Module: "ftuna", Path: key, Code: "ftuna.built", Detail: "unknown", Color: check.ColorYellow}
 	if id == "" || recipesRoot == "" || !safeID(id) {
-		return scoreUnknown, []check.Issue{builtIssue}
+		return []check.Issue{builtIssue}
 	}
 	builtIssue.Path = id
 	recipeDir := filepath.Join(recipesRoot, filepath.FromSlash(id))
 	st, err := os.Stat(recipeDir)
 	if err != nil || !st.IsDir() {
-		return scoreUnknown, []check.Issue{builtIssue}
+		return []check.Issue{builtIssue}
 	}
 	names, err := imageNames(filepath.Join(recipeDir, "overlay", ".sfosbuild", "image"))
 	if err != nil {
-		return scoreUnknown, []check.Issue{builtIssue}
+		return []check.Issue{builtIssue}
 	}
 	if len(names) == 0 {
 		builtIssue.Detail = "clean"
-		return scoreClean, []check.Issue{builtIssue}
+		builtIssue.Color = check.ColorGreen
+		return []check.Issue{builtIssue}
 	}
 	builtIssue.Detail = "hooks"
-	return scoreHooks, []check.Issue{builtIssue, {
+	builtIssue.Color = check.ColorRed
+	return []check.Issue{builtIssue, {
 		Module: "ftuna",
 		Path:   id,
 		Code:   "ftuna.image",
 		Detail: strings.Join(names, "\n"),
+		Color:  check.ColorRed,
 	}}
 }
 

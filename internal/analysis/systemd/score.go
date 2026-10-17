@@ -5,38 +5,38 @@ import (
 	"bytes"
 	"path"
 	"strings"
+
+	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-// A system service with no User= runs as root and starts at 30.
-// An explicit unprivileged User= starts at 75. DynamicUser= starts at 80.
-// A user-manager unit already runs as the session user and starts at 85.
-// Sandbox settings can add up to 70, so a thorough sandbox reaches 100.
-// Ambient capabilities subtract 25. The result is clamped to 0..100.
+// Weights only choose a color. They are not published.
+// A system service with no User= runs as root. An explicit unprivileged
+// User= is milder. DynamicUser= and a user-manager unit start greener.
+// Sandbox settings can lift a unit to green. Ambient capabilities pull
+// a green unit down to yellow, and leave a red unit red.
 const (
-	scoreSystemRoot   = 30
-	scoreDynamicUser  = 80
-	scoreSystemUser   = 75
-	scoreSession      = 85
-	scoreUserTimer    = 85
-	scoreSystemTimer  = 30
-	scoreGroupPenalty = 10
-	scoreAmbient      = 25
-	sandboxCap        = 70
+	weightSystemRoot   = 30
+	weightDynamicUser  = 80
+	weightSystemUser   = 75
+	weightSession      = 85
+	weightGroupPenalty = 10
+	weightAmbient      = 25
+	sandboxCap         = 70
 )
 
 func judgeService(id identity, unitPath string, body []byte, known bool) found {
 	svc := parseUnit(body).fields
 	user, group := account(id.scope, svc)
-	score := baseScore(id.scope, user, svc.dynamic)
+	points := baseWeight(id.scope, user, svc.dynamic)
 	if !rootish(user) && privilegedGroup(group) {
-		score -= scoreGroupPenalty
+		points -= weightGroupPenalty
 	}
 	features, bonus := sandbox(svc)
 	if bonus > sandboxCap {
 		bonus = sandboxCap
 	}
 	if known {
-		score += bonus
+		points += bonus
 	}
 	exec := joinVals(svc.service["ExecStart"])
 	if exec == "" {
@@ -44,7 +44,7 @@ func judgeService(id identity, unitPath string, body []byte, known bool) found {
 	}
 	detail := "scope=" + id.scope + " user=" + user + " group=" + group + " exec=" + exec
 	if svc.ambient {
-		score -= scoreAmbient
+		points -= weightAmbient
 		ambient := joinVals(svc.service["AmbientCapabilities"])
 		if ambient == "" {
 			ambient = "set"
@@ -63,9 +63,18 @@ func judgeService(id identity, unitPath string, body []byte, known bool) found {
 		path:   unitPath,
 		code:   "systemd.service",
 		detail: detail,
-		score:  clamp(score),
-		scored: true,
+		color:  shade(clamp(points)),
 	}
+}
+
+func shade(points int) string {
+	if points >= 80 {
+		return check.ColorGreen
+	}
+	if points >= 50 {
+		return check.ColorYellow
+	}
+	return check.ColorRed
 }
 
 func activationCode(name string) (string, bool) {
@@ -100,30 +109,29 @@ func activationTarget(name string, body unitBody) string {
 	return path.Base(target)
 }
 
-func judgeActivation(id identity, unitPath, code, target string, serviceSeen bool) found {
-	score := scoreSystemTimer
+func judgeActivation(id identity, unitPath, code, target string) found {
+	color := check.ColorRed
 	if id.scope == "user" {
-		score = scoreUserTimer
+		color = check.ColorGreen
 	}
 	return found{
 		path:   unitPath,
 		code:   code,
 		detail: "scope=" + id.scope + " activates=" + target,
-		score:  score,
-		scored: !serviceSeen,
+		color:  color,
 	}
 }
 
-func baseScore(scope, user string, dynamic bool) int {
+func baseWeight(scope, user string, dynamic bool) int {
 	switch {
 	case scope == "user" && !rootish(user):
-		return scoreSession
+		return weightSession
 	case dynamic && !rootish(user):
-		return scoreDynamicUser
+		return weightDynamicUser
 	case !rootish(user):
-		return scoreSystemUser
+		return weightSystemUser
 	default:
-		return scoreSystemRoot
+		return weightSystemRoot
 	}
 }
 

@@ -17,8 +17,8 @@ func TestModes(t *testing.T) {
 		{Path: "/var/lib/demo/state", Kind: check.KindFile, Mode: 0100666, User: "nemo", Group: "nemo"},
 		{Path: "%post", Kind: check.KindScriptlet, Mode: 0100666},
 	})
-	if rep.Score != 0 || len(rep.Issues) != 4 {
-		t.Fatalf("%d %+v", rep.Score, rep.Issues)
+	if len(rep.Issues) != 4 || rep.Issues[0].Color != check.ColorRed {
+		t.Fatalf("%+v", rep.Issues)
 	}
 	got := map[string]string{}
 	for _, issue := range rep.Issues {
@@ -37,11 +37,11 @@ func TestModes(t *testing.T) {
 		t.Fatalf("file %s", got["/var/lib/demo/state"])
 	}
 	plain := m.Analyze([]check.File{{Path: "/usr/bin/demo", Kind: check.KindFile, Mode: 0100755}})
-	if plain.Score != check.Neutral || len(plain.Issues) != 0 {
+	if len(plain.Issues) != 0 {
 		t.Fatalf("plain %+v", plain)
 	}
 	config := m.Analyze([]check.File{{Path: "/etc/demo.conf", Kind: check.KindFile, Mode: 0100666, User: "root", Group: "root"}})
-	if config.Score != 0 || config.Issues[0].Detail != "/etc/demo.conf mode 0100666 user root group root file" {
+	if len(config.Issues) != 1 || config.Issues[0].Color != check.ColorRed || config.Issues[0].Detail != "/etc/demo.conf mode 0100666 user root group root file" {
 		t.Fatalf("config %+v", config)
 	}
 }

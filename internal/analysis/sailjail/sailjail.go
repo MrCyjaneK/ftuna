@@ -1,9 +1,8 @@
 // Package sailjail reads [X-Sailjail] from desktop files installed in
-// /usr/share/applications. An application with no sandbox section is a
-// user process and scores 75. Sandboxing=Disabled is an explicit opt-out
-// and scores 55. A sandboxed application scores 100. Permissions are
-// listed and do not change that score. The module score is the worst
-// desktop file. A package with no application desktop abstains.
+// /usr/share/applications. An application with no sandbox section is yellow.
+// Sandboxing=Disabled is yellow. A sandboxed application is green.
+// Permissions are listed in gray and do not change that color.
+// A package with no application desktop abstains.
 package sailjail
 
 import (
@@ -14,12 +13,6 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-const (
-	scoreAbsent   = 75
-	scoreDisabled = 55
-	scoreJailed   = 100
-)
-
 func init() { check.Register(module{}) }
 
 type module struct{}
@@ -27,36 +20,42 @@ type module struct{}
 func (module) Name() string { return "sailjail" }
 
 func (module) Analyze(files []check.File) check.Report {
-	worst := check.Neutral
 	var out []check.Issue
 	for _, f := range files {
 		if f.Kind != check.KindFile || !isAppDesktop(f.Path) {
 			continue
 		}
-		issues, score := desktop(f)
-		out = append(out, issues...)
-		if worst < 0 || score < worst {
-			worst = score
-		}
+		out = append(out, desktop(f)...)
 	}
-	return check.Report{Score: worst, Issues: out}
+	return check.Report{Issues: out}
 }
 
-func desktop(f check.File) ([]check.Issue, int) {
+func desktop(f check.File) []check.Issue {
 	hasGroup, disabled, perms := parseDesktop(f.Body)
 	if !hasGroup {
 		return []check.Issue{{
 			Path:   f.Path,
 			Code:   "sailjail.absent",
 			Detail: "no [X-Sailjail] section",
-		}}, scoreAbsent
+			Color:  check.ColorYellow,
+		}}
 	}
 	var out []check.Issue
+	color := check.ColorGreen
 	if disabled {
+		color = check.ColorYellow
 		out = append(out, check.Issue{
 			Path:   f.Path,
 			Code:   "sailjail.disabled",
 			Detail: "Sandboxing=Disabled",
+			Color:  color,
+		})
+	} else if len(perms) == 0 {
+		out = append(out, check.Issue{
+			Path:   f.Path,
+			Code:   "sailjail.jailed",
+			Detail: "sandboxed",
+			Color:  check.ColorGreen,
 		})
 	}
 	for _, perm := range perms {
@@ -64,12 +63,10 @@ func desktop(f check.File) ([]check.Issue, int) {
 			Path:   f.Path,
 			Code:   "sailjail.permission",
 			Detail: perm,
+			Color:  check.ColorGray,
 		})
 	}
-	if disabled {
-		return out, scoreDisabled
-	}
-	return out, scoreJailed
+	return out
 }
 
 func isAppDesktop(path string) bool {

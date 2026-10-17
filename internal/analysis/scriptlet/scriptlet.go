@@ -1,9 +1,8 @@
-// Package scriptlet scores RPM scriptlets. They run as root during install,
-// erase, or verification. A script with commands scores 30. A header that
-// only names a known helper, such as ldconfig, scores 80: it is still root,
+// Package scriptlet reports RPM scriptlets. They run as root during install,
+// erase, or verification. A script with commands is red. A header that
+// only names a known helper, such as ldconfig, is green: it is still root,
 // and it is not the package's own code. An empty shell script abstains.
-// The finding records the interpreter and the first commands. The module
-// score is the worst scriptlet.
+// The finding records the interpreter and the first commands.
 package scriptlet
 
 import (
@@ -13,11 +12,6 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/analysis/check"
 )
 
-const (
-	scoreRoot   = 30
-	scoreHelper = 80
-)
-
 func init() { check.Register(module{}) }
 
 type module struct{}
@@ -25,22 +19,20 @@ type module struct{}
 func (module) Name() string { return "scriptlet" }
 
 func (module) Analyze(files []check.File) check.Report {
-	score := check.Neutral
 	var issues []check.Issue
 	for _, f := range files {
-		points, detail, ok := fileScore(f)
+		color, detail, ok := fileFinding(f)
 		if !ok {
 			continue
 		}
-		issues = append(issues, check.Issue{Path: f.Path, Code: "scriptlet", Detail: detail})
-		score = check.Worse(score, points)
+		issues = append(issues, check.Issue{Path: f.Path, Code: "scriptlet", Detail: detail, Color: color})
 	}
-	return check.Report{Score: score, Issues: issues}
+	return check.Report{Issues: issues}
 }
 
-func fileScore(f check.File) (int, string, bool) {
+func fileFinding(f check.File) (string, string, bool) {
 	if f.Kind != check.KindScriptlet {
-		return 0, "", false
+		return "", "", false
 	}
 	prog := strings.TrimSpace(f.Program)
 	if prog == "" {
@@ -50,14 +42,14 @@ func fileScore(f check.File) (int, string, bool) {
 	if len(lines) == 0 {
 		switch {
 		case knownHelper(prog):
-			return scoreHelper, "user=root program=" + prog, true
+			return check.ColorGreen, "user=root program=" + prog, true
 		case shellProgram(prog):
-			return 0, "", false
+			return "", "", false
 		default:
-			return scoreRoot, "user=root program=" + prog, true
+			return check.ColorRed, "user=root program=" + prog, true
 		}
 	}
-	return scoreRoot, "user=root program=" + prog + " body=" + preview(lines), true
+	return check.ColorRed, "user=root program=" + prog + " body=" + preview(lines), true
 }
 
 func commands(body []byte) []string {

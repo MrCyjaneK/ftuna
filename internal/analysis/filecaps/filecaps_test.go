@@ -14,24 +14,24 @@ func TestCaps(t *testing.T) {
 		{Path: "/usr/bin/plain", Kind: check.KindFile},
 		{Path: "/usr/bin/note", Kind: check.KindFile, Caps: "cap_net_broadcast=p"},
 	})
-	if rep.Score != scoreRoot || len(rep.Issues) != 3 {
-		t.Fatalf("%d %+v", rep.Score, rep.Issues)
+	if len(rep.Issues) != 3 || rep.Issues[0].Color != check.ColorRed || rep.Issues[1].Color != check.ColorRed || rep.Issues[2].Color != check.ColorRed {
+		t.Fatalf("%+v", rep.Issues)
 	}
 	if rep.Issues[0].Detail != "cap_net_bind_service=ep" || rep.Issues[1].Code != "filecaps" {
 		t.Fatalf("%+v", rep.Issues)
 	}
-	if got := m.Analyze([]check.File{{Path: "/usr/bin/plain", Kind: check.KindFile, Caps: ""}}); got.Score != check.Neutral {
+	if got := m.Analyze([]check.File{{Path: "/usr/bin/plain", Kind: check.KindFile, Caps: ""}}); len(got.Issues) != 0 {
 		t.Fatalf("none %+v", got)
 	}
 	owned := m.Analyze([]check.File{{
 		Path: "/usr/bin/bind", Kind: check.KindFile, Mode: 0100755, User: "root", Group: "root",
 		Caps: "cap_net_bind_service=ep",
 	}})
-	if owned.Score != scoreMedium || owned.Issues[0].Detail != "cap_net_bind_service=ep mode 0100755 user root group root" {
+	if len(owned.Issues) != 1 || owned.Issues[0].Color != check.ColorRed || owned.Issues[0].Detail != "cap_net_bind_service=ep mode 0100755 user root group root" {
 		t.Fatalf("owned %+v", owned)
 	}
 	unknown := m.Analyze([]check.File{{Path: "/usr/bin/odd", Kind: check.KindFile, Caps: "cap_net_broadcast=p"}})
-	if unknown.Score != scoreRoot {
+	if len(unknown.Issues) != 1 || unknown.Issues[0].Color != check.ColorRed {
 		t.Fatalf("unknown %+v", unknown)
 	}
 }
