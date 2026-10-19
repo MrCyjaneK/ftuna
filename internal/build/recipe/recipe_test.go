@@ -14,7 +14,7 @@ func TestDiscoverPinsCommitAndArches(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "overlay"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "name: Sailfish Components Gallery\ncommit: aca93b6cfecb02e9d13955e71b51460e7d303424\nai: H\ndescription: Gallery components\n# later fields are ignored\nnote: keep\n"
+	yaml := "name: Sailfish Components Gallery\ncommit: aca93b6cfecb02e9d13955e71b51460e7d303424\nai: H\ndescription: Gallery components\npath: rpm/gallery.yaml\n# later fields are ignored\nnote: keep\n"
 	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestDiscoverPinsCommitAndArches(t *testing.T) {
 	if r.Description != "Gallery components" {
 		t.Fatalf("description %q", r.Description)
 	}
-	if r.Path != "." {
+	if r.Path != "rpm/gallery.yaml" {
 		t.Fatalf("path %q", r.Path)
 	}
 }
@@ -73,6 +73,7 @@ description: |
   - Focus
 install:
   - harbour-advanced-camera
+path: rpm/harbour-advanced-camera.yaml
 `
 	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -96,7 +97,7 @@ func TestDiscoverPath(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	yaml := "name: Orange Flex\ncommit: 1023ab50a085e6307f818971276818dd176eecb2\nai: H\ndescription: Orange Flex\npath: ./apps/sfos\n"
+	yaml := "name: Orange Flex\ncommit: 1023ab50a085e6307f818971276818dd176eecb2\nai: H\ndescription: Orange Flex\npath: ./apps/sfos/rpm/orange.yaml\n"
 	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +105,7 @@ func TestDiscoverPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got[0].Path != "apps/sfos" {
+	if got[0].Path != "apps/sfos/rpm/orange.yaml" {
 		t.Fatalf("path %q", got[0].Path)
 	}
 }
@@ -118,10 +119,13 @@ func TestRejectsPathOutsideRepository(t *testing.T) {
 	path := filepath.Join(dir, "build.yaml")
 	base := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\n"
 	for _, yaml := range []string{
-		base + "path: /tmp/apps\n",
-		base + "path: ..\n",
-		base + "path: ../apps\n",
-		base + "path: apps/../../etc\n",
+		base,
+		base + "path: .\n",
+		base + "path: apps/sfos\n",
+		base + "path: rpm/app.spec\n",
+		base + "path: /tmp/apps.yaml\n",
+		base + "path: ../app.yaml\n",
+		base + "path: apps/../../etc/app.yaml\n",
 	} {
 		if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 			t.Fatal(err)
@@ -229,10 +233,10 @@ func TestDiscoverSeveralRecipesInOneRepository(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := "commit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: A package\n"
-	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte("name: The app\n"+base), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte("name: The app\n"+base+"path: rpm/app.yaml\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lib := "name: The library\n" + base + "path: libs/foo\nrepos:\n  - https://repo-oss.ftuna.eu/{version}/{arch}/\n  - https://repo.sailfishos.org/obs/sailfishos:/chum/{version}_{arch}/\n"
+	lib := "name: The library\n" + base + "path: libs/foo/rpm/lib.yaml\nrepos:\n  - https://repo-oss.ftuna.eu/{version}/{arch}/\n  - https://repo.sailfishos.org/obs/sailfishos:/chum/{version}_{arch}/\n"
 	if err := os.WriteFile(filepath.Join(dir, "libfoo.yaml"), []byte(lib), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +254,7 @@ func TestDiscoverSeveralRecipesInOneRepository(t *testing.T) {
 	if libRecipe.ID != "github.com/example/mono/libfoo" || libRecipe.URL != "https://github.com/example/mono" {
 		t.Fatalf("id %s url %s", libRecipe.ID, libRecipe.URL)
 	}
-	if libRecipe.Path != "libs/foo" || len(libRecipe.Repos) != 2 {
+	if libRecipe.Path != "libs/foo/rpm/lib.yaml" || len(libRecipe.Repos) != 2 {
 		t.Fatalf("%#v", libRecipe)
 	}
 	if filepath.Base(libRecipe.File) != "libfoo.yaml" {
@@ -264,7 +268,7 @@ func TestDiscoverRejectsDuplicateRecipeID(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "name: A package\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: A package\n"
+	body := "name: A package\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: A package\npath: rpm/foo.yaml\n"
 	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +287,7 @@ func TestRejectsRepoURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "build.yaml")
-	base := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\nrepos:\n"
+	base := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\npath: rpm/app.yaml\nrepos:\n"
 	for _, repo := range []string{
 		"  - http://repo-oss.ftuna.eu/{version}/{arch}/\n",
 		"  - https://repo-oss.ftuna.eu/{version}/{arch}/;id\n",
@@ -366,7 +370,7 @@ func TestDiscoverAcceptsRepoKey(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\nrepos:\n  - https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key\n"
+	body := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\npath: rpm/app.yaml\nrepos:\n  - https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key\n"
 	if err := os.WriteFile(filepath.Join(dir, "build.yaml"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -18,8 +19,8 @@ func Run(ctx context.Context, version, arches, project, outDir, buildPath string
 	if err != nil {
 		return "", fmt.Errorf("sfosbuild not on PATH")
 	}
-	if buildPath == "" {
-		buildPath = "."
+	if strings.TrimSpace(buildPath) == "" {
+		return "", fmt.Errorf("sfosbuild needs a path to a yaml file")
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", err

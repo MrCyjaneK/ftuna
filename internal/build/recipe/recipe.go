@@ -28,8 +28,8 @@ type Recipe struct {
 	URL     string
 	Patches string
 	Overlay string
-	// Path is the directory inside the clone that contains rpm/*.yaml.
-	// "." is the repository root.
+	// Path is the spectacle yaml inside the clone, such as rpm/app.yaml
+	// or apps/sfos/rpm/app.yaml. sfosbuild builds that file.
 	Path        string
 	Icon        string
 	Screenshots []string
@@ -211,23 +211,22 @@ func load(root, yamlPath string) (Recipe, error) {
 	}, nil
 }
 
-// cleanPath is the directory sfosbuild builds, relative to the clone.
-// An empty path is the repository root. apps/sfos and ./apps/sfos both
-// name the subdirectory that contains rpm/*.yaml.
+// cleanPath is the spectacle yaml sfosbuild builds, relative to the clone.
+// rpm/app.yaml and ./apps/sfos/rpm/app.yaml both name that file.
 func cleanPath(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return ".", nil
+		return "", fmt.Errorf("path is required")
 	}
 	if filepath.IsAbs(s) {
-		return "", fmt.Errorf("path %q must be inside the repository", s)
+		return "", fmt.Errorf("path %q must be a yaml file inside the repository", s)
 	}
 	clean := filepath.ToSlash(filepath.Clean(s))
-	if clean == "." {
-		return ".", nil
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path %q must be a yaml file inside the repository", s)
 	}
-	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("path %q must be inside the repository", s)
+	if !strings.HasSuffix(clean, ".yaml") {
+		return "", fmt.Errorf("path %q must be a yaml file", s)
 	}
 	return clean, nil
 }
