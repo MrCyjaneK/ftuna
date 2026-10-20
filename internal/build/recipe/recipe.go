@@ -28,8 +28,8 @@ type Recipe struct {
 	URL     string
 	Patches string
 	Overlay string
-	// Path is the spectacle yaml inside the clone, such as rpm/app.yaml
-	// or apps/sfos/rpm/app.yaml. sfosbuild builds that file.
+	// Path is the directory inside the clone that contains rpm/.
+	// "." is the repository root. apps/sfos is that subdirectory.
 	Path        string
 	Icon        string
 	Screenshots []string
@@ -59,6 +59,8 @@ type recipeFile struct {
 	AI          string   `yaml:"ai"`
 	Path        string   `yaml:"path"`
 	Repos       []string `yaml:"repos"`
+	Overlay     string   `yaml:"overlay"`
+	Patches     string   `yaml:"patches"`
 }
 
 // Root is the recipes checkout named by FTUNA_RECIPES.
@@ -191,6 +193,14 @@ func load(root, yamlPath string) (Recipe, error) {
 	if err != nil {
 		return Recipe{}, err
 	}
+	overlayRel, err := cleanRelDir("overlay", file.Overlay, "overlay")
+	if err != nil {
+		return Recipe{}, fmt.Errorf("%s: %w", id, err)
+	}
+	patchesRel, err := cleanRelDir("patches", file.Patches, "patches")
+	if err != nil {
+		return Recipe{}, fmt.Errorf("%s: %w", id, err)
+	}
 	return Recipe{
 		ID:          id,
 		Name:        displayName,
@@ -198,8 +208,8 @@ func load(root, yamlPath string) (Recipe, error) {
 		Commit:      file.Commit,
 		Arches:      arches,
 		URL:         "https://" + source,
-		Patches:     filepath.Join(dir, "patches"),
-		Overlay:     filepath.Join(dir, "overlay"),
+		Patches:     filepath.Join(dir, filepath.FromSlash(patchesRel)),
+		Overlay:     filepath.Join(dir, filepath.FromSlash(overlayRel)),
 		Path:        buildPath,
 		Icon:        icon,
 		Screenshots: shots,
@@ -211,22 +221,39 @@ func load(root, yamlPath string) (Recipe, error) {
 	}, nil
 }
 
-// cleanPath is the spectacle yaml sfosbuild builds, relative to the clone.
-// rpm/app.yaml and ./apps/sfos/rpm/app.yaml both name that file.
+// cleanPath is the directory inside the clone that contains rpm/.
+// "." is the repository root. ./apps/sfos and apps/sfos both name that subdirectory.
 func cleanPath(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", fmt.Errorf("path is required")
 	}
 	if filepath.IsAbs(s) {
-		return "", fmt.Errorf("path %q must be a yaml file inside the repository", s)
+		return "", fmt.Errorf("path %q must be a directory inside the repository", s)
+	}
+	clean := filepath.ToSlash(filepath.Clean(s))
+	if clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("path %q must be a directory inside the repository", s)
+	}
+	if strings.HasSuffix(clean, ".yaml") || strings.HasSuffix(clean, ".spec") {
+		return "", fmt.Errorf("path %q must be the directory that contains rpm/", s)
+	}
+	return clean, nil
+}
+
+// cleanRelDir is a directory next to the recipe yaml, such as overlay or
+// go1_18/overlay. An empty value uses fallback.
+func cleanRelDir(field, s, fallback string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return fallback, nil
+	}
+	if filepath.IsAbs(s) {
+		return "", fmt.Errorf("%s %q must be a directory inside the recipe", field, s)
 	}
 	clean := filepath.ToSlash(filepath.Clean(s))
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("path %q must be a yaml file inside the repository", s)
-	}
-	if !strings.HasSuffix(clean, ".yaml") {
-		return "", fmt.Errorf("path %q must be a yaml file", s)
+		return "", fmt.Errorf("%s %q must be a directory inside the recipe", field, s)
 	}
 	return clean, nil
 }

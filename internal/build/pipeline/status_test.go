@@ -237,6 +237,34 @@ func TestPrepareStatusCurrentSkipsBuild(t *testing.T) {
 	}
 }
 
+func TestPrepareStatusRebuildsWhenFingerprintChanges(t *testing.T) {
+	r := testRecipe(t)
+	man := Manifest{Recipes: map[string]RecipeBuild{
+		r.ID: {
+			Commit: r.Commit,
+			Arches: map[string]ArchBuild{
+				"aarch64": {RPMs: []RPMRec{{File: r.ID + "/app.aarch64.rpm", Name: "app"}}},
+				"armv7hl": {RPMs: []RPMRec{{File: r.ID + "/app.armv7hl.rpm", Name: "app"}}},
+				"i486":    {RPMs: []RPMRec{{File: r.ID + "/app.i486.rpm", Name: "app"}}},
+			},
+		},
+	}}
+	prev := Status{Recipes: []StatusRecipe{{
+		ID:          r.ID,
+		State:       stateCurrent,
+		Fingerprint: "old",
+	}}}
+	doc, build, err := prepareStatus([]recipe.Recipe{r}, man, prev, "5.1.0.11", func(string) (bool, error) {
+		return true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(build) != 1 || doc.Recipes[0].State != statePending {
+		t.Fatalf("state %s build %d", doc.Recipes[0].State, len(build))
+	}
+}
+
 func TestPrepareStatusKeepsPublishedRPMs(t *testing.T) {
 	r := testRecipe(t)
 	fp, err := Fingerprint(r, "5.1.0.11")

@@ -77,7 +77,7 @@ type StatusRecipe struct {
 	PublishedCommit string              `json:"published_commit,omitempty"`
 }
 
-// Fingerprint is the sha256 of the inputs that decide whether a failed recipe
+// Fingerprint is the sha256 of the inputs that decide whether a recipe
 // is built again. Sections are length-prefixed: the recipe yaml, patch files,
 // overlay files, the sfosbuild path, the arch argument, and the SFOS version.
 // A present patches or overlay directory is part of the hash, because checkout
@@ -228,6 +228,14 @@ func prepareStatus(recipes []recipe.Recipe, man Manifest, prev Status, version s
 		need, err := NeedsBuild(r, man, version, false, exists)
 		if err != nil {
 			return Status{}, nil, err
+		}
+		// The manifest only records the commit and RPM names. A spec or overlay
+		// edit keeps those the same, so compare the fingerprint recorded when
+		// this recipe was last considered.
+		if !need {
+			if old, ok := prevByID[r.ID]; ok && old.Fingerprint != "" && old.Fingerprint != fp {
+				need = true
+			}
 		}
 		applyPublished(&entry, man)
 		if !need {
