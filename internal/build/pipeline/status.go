@@ -62,6 +62,7 @@ type StatusRecipe struct {
 	Commit      string   `json:"commit"`
 	Arches      []string `json:"arches"`
 	Repos       []string `json:"repos,omitempty"`
+	Depends     []string `json:"depends,omitempty"`
 	Description string   `json:"description"`
 	Icon        string   `json:"icon,omitempty"`
 	Screenshots []string `json:"screenshots,omitempty"`
@@ -77,11 +78,15 @@ type StatusRecipe struct {
 	PublishedCommit string              `json:"published_commit,omitempty"`
 }
 
-// Fingerprint is the sha256 of the inputs that decide whether a recipe
-// is built again. Sections are length-prefixed: the recipe yaml, patch files,
-// overlay files, the sfosbuild path, the arch argument, and the SFOS version.
-// A present patches or overlay directory is part of the hash, because checkout
-// treats an empty overlay differently from a missing one.
+// Fingerprint is the sha256 of this recipe's own inputs. Sections are
+// length-prefixed: the recipe yaml, patch files, overlay files, the sfosbuild
+// path, the arch argument, and the SFOS version. A present patches or overlay
+// directory is part of the hash, because checkout treats an empty overlay
+// differently from a missing one.
+//
+// Fingerprints is the hash prepareStatus stores. A recipe with no dependencies
+// keeps Fingerprint unchanged. A recipe with dependencies also hashes those
+// fingerprints, so a dependency change rebuilds it and every recipe behind it.
 func Fingerprint(r recipe.Recipe, version string) (string, error) {
 	body, err := os.ReadFile(r.File)
 	if err != nil {
@@ -107,6 +112,67 @@ func Fingerprint(r recipe.Recipe, version string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// Fingerprints returns the rebuild hash for each recipe. Dependencies are
+// included only when a recipe lists them, so editing one recipe does not
+// rebuild the rest of the tree.
+func Fingerprints(recipes []recipe.Recipe, version string) (map[string]string, error) {
+	local := map[string]string{}
+	byID := map[string]recipe.Recipe{}
+	for _, r := range recipes {
+		fp, err := Fingerprint(r, version)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", r.ID, err)
+		}
+		local[r.ID] = fp
+		byID[r.ID] = r
+	}
+	full := map[string]string{}
+	visiting := map[string]bool{}
+	var walk func(id string) (string, error)
+	walk = func(id string) (string, error) {
+		if fp, ok := full[id]; ok {
+			return fp, nil
+		}
+		if visiting[id] {
+			return "", fmt.Errorf("%s: dependency cycle", id)
+		}
+		visiting[id] = true
+		r, ok := byID[id]
+		if !ok {
+			return "", fmt.Errorf("dependency %s is not a recipe", id)
+		}
+		if len(r.Depends) == 0 {
+			full[id] = local[id]
+			delete(visiting, id)
+			return full[id], nil
+		}
+		h := sha256.New()
+		if err := writePart(h, "self", []byte(local[id])); err != nil {
+			return "", err
+		}
+		deps := append([]string{}, r.Depends...)
+		sort.Strings(deps)
+		for _, dep := range deps {
+			depFP, err := walk(dep)
+			if err != nil {
+				return "", err
+			}
+			if err := writePart(h, dep, []byte(depFP)); err != nil {
+				return "", err
+			}
+		}
+		full[id] = hex.EncodeToString(h.Sum(nil))
+		delete(visiting, id)
+		return full[id], nil
+	}
+	for _, r := range recipes {
+		if _, err := walk(r.ID); err != nil {
+			return nil, err
+		}
+	}
+	return full, nil
 }
 
 func writePart(w io.Writer, name string, body []byte) error {
@@ -199,7 +265,7 @@ func failureUnchanged(prev StatusRecipe, fingerprint string) bool {
 // prepareStatus decides each recipe's state from the previous status file and
 // the manifest. Recipes in the returned slice are the ones All should build.
 // An unchanged failure is skipped and keeps its error, log, and failed_at.
-func prepareStatus(recipes []recipe.Recipe, man Manifest, prev Status, version string, exists func(string) (bool, error)) (Status, []recipe.Recipe, error) {
+func prepareStatus(recipes []recipe.Recipe, man Manifest, prev Status, version string, exists func(string) (bool, error), force bool) (Status, []recipe.Recipe, error) {
 	prevByID := map[string]StatusRecipe{}
 	for _, entry := range prev.Recipes {
 		prevByID[entry.ID] = entry
@@ -209,14 +275,15 @@ func prepareStatus(recipes []recipe.Recipe, man Manifest, prev Status, version s
 		SFOS:    version,
 		Recipes: make([]StatusRecipe, 0, len(recipes)),
 	}
+	fps, err := Fingerprints(recipes, version)
+	if err != nil {
+		return Status{}, nil, err
+	}
 	var build []recipe.Recipe
 	for _, r := range recipes {
-		fp, err := Fingerprint(r, version)
-		if err != nil {
-			return Status{}, nil, fmt.Errorf("%s: %w", r.ID, err)
-		}
+		fp := fps[r.ID]
 		entry := statusEntry(r, fp)
-		if old, ok := prevByID[r.ID]; ok && failureUnchanged(old, fp) {
+		if old, ok := prevByID[r.ID]; ok && !force && failureUnchanged(old, fp) {
 			entry.State = stateSkipped
 			entry.Error = old.Error
 			entry.Log = old.Log
@@ -260,6 +327,7 @@ func statusEntry(r recipe.Recipe, fp string) StatusRecipe {
 		Commit:      r.Commit,
 		Arches:      append([]string{}, r.Arches...),
 		Repos:       append([]string{}, r.Repos...),
+		Depends:     append([]string{}, r.Depends...),
 		Description: r.Description,
 		Icon:        r.Icon,
 		Screenshots: append([]string{}, r.Screenshots...),

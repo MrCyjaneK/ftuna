@@ -462,6 +462,93 @@ func expandRepos(t *testing.T, script, version, arch string) string {
 	return string(out)
 }
 
+func TestGoBootstrapOrder(t *testing.T) {
+	root := t.TempDir()
+	writeRecipe(t, root, "github.com/aaa/early/build.yaml", recipeYAML("Early", "depends:\n  - github.com/golang/go/go1_21\n"))
+	writeRecipe(t, root, "github.com/golang/go/go1_18.yaml", recipeYAML("Go 1.18", ""))
+	writeRecipe(t, root, "github.com/golang/go/go1_19.yaml", recipeYAML("Go 1.19", "depends:\n  - github.com/golang/go/go1_18\n"))
+	writeRecipe(t, root, "github.com/golang/go/go1_21.yaml", recipeYAML("Go 1.21", "depends:\n  - github.com/golang/go/go1_19\n"))
+	got, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].ID != "github.com/aaa/early" {
+		t.Fatalf("discover stays in id order, got %s first", got[0].ID)
+	}
+	if len(got[2].Depends) != 1 || got[2].Depends[0] != "github.com/golang/go/go1_18" {
+		t.Fatalf("go1_19 depends %#v", got[2].Depends)
+	}
+	ordered, err := Order(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, r := range ordered {
+		ids = append(ids, r.ID)
+	}
+	want := []string{
+		"github.com/golang/go/go1_18",
+		"github.com/golang/go/go1_19",
+		"github.com/golang/go/go1_21",
+		"github.com/aaa/early",
+	}
+	if strings.Join(ids, " ") != strings.Join(want, " ") {
+		t.Fatalf("order %v", ids)
+	}
+}
+
+func TestRejectsGoBootstrapDepends(t *testing.T) {
+	t.Run("missing", func(t *testing.T) {
+		root := t.TempDir()
+		writeRecipe(t, root, "github.com/golang/go/go1_19.yaml", recipeYAML("Go 1.19", "depends:\n  - github.com/golang/go/go1_18\n"))
+		if _, err := Discover(root); err == nil || !strings.Contains(err.Error(), "github.com/golang/go/go1_18") {
+			t.Fatal(err)
+		}
+	})
+	t.Run("cycle", func(t *testing.T) {
+		root := t.TempDir()
+		writeRecipe(t, root, "github.com/golang/go/go1_18.yaml", recipeYAML("Go 1.18", "depends:\n  - github.com/golang/go/go1_21\n"))
+		writeRecipe(t, root, "github.com/golang/go/go1_19.yaml", recipeYAML("Go 1.19", "depends:\n  - github.com/golang/go/go1_18\n"))
+		writeRecipe(t, root, "github.com/golang/go/go1_21.yaml", recipeYAML("Go 1.21", "depends:\n  - github.com/golang/go/go1_19\n"))
+		if _, err := Discover(root); err == nil || !strings.Contains(err.Error(), "cycle") {
+			t.Fatal(err)
+		}
+	})
+	t.Run("arch", func(t *testing.T) {
+		root := t.TempDir()
+		writeRecipe(t, root, "github.com/golang/go/go1_18.yaml", "name: Go 1.18\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: Go 1.18\npath: .\narches: aarch64\n")
+		writeRecipe(t, root, "github.com/golang/go/go1_19.yaml", recipeYAML("Go 1.19", "depends:\n  - github.com/golang/go/go1_18\n"))
+		_, err := Discover(root)
+		if err == nil || !strings.Contains(err.Error(), "armv7hl") {
+			t.Fatal(err)
+		}
+	})
+	t.Run("duplicate", func(t *testing.T) {
+		root := t.TempDir()
+		writeRecipe(t, root, "github.com/golang/go/go1_18.yaml", recipeYAML("Go 1.18", ""))
+		body := recipeYAML("Go 1.19", "depends:\n  - github.com/golang/go/go1_18\n  - github.com/golang/go/go1_18\n")
+		writeRecipe(t, root, "github.com/golang/go/go1_19.yaml", body)
+		if _, err := Discover(root); err == nil || !strings.Contains(err.Error(), "duplicate") {
+			t.Fatal(err)
+		}
+	})
+}
+
+func writeRecipe(t *testing.T, root, rel, body string) {
+	t.Helper()
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func recipeYAML(name, extra string) string {
+	return "name: " + name + "\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: " + name + "\npath: .\narches: all\n" + extra
+}
+
 func TestValidVersion(t *testing.T) {
 	if !ValidVersion("5.1.0.11") {
 		t.Fatal("5.1.0.11")

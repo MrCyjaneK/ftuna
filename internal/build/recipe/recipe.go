@@ -46,6 +46,10 @@ type Recipe struct {
 	// A URL may be followed by ; and an https signing key.
 	// The key is written as gpgkey= so zypper imports it on refresh.
 	Repos []string
+	// Depends are recipe IDs that must be published before this recipe builds.
+	// A change to a dependency rebuilds this recipe, and then every recipe
+	// that depends on it.
+	Depends []string
 }
 
 type recipeFile struct {
@@ -61,6 +65,7 @@ type recipeFile struct {
 	Repos       []string `yaml:"repos"`
 	Overlay     string   `yaml:"overlay"`
 	Patches     string   `yaml:"patches"`
+	Depends     []string `yaml:"depends"`
 }
 
 // Root is the recipes checkout named by FTUNA_RECIPES.
@@ -112,6 +117,9 @@ func Discover(root string) ([]Recipe, error) {
 			return nil, fmt.Errorf("duplicate recipe %s (%s and %s)", r.ID, prev, r.File)
 		}
 		seen[r.ID] = r.File
+	}
+	if _, err := Order(out); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -193,6 +201,10 @@ func load(root, yamlPath string) (Recipe, error) {
 	if err != nil {
 		return Recipe{}, err
 	}
+	depends, err := cleanDepends(id, file.Depends)
+	if err != nil {
+		return Recipe{}, err
+	}
 	overlayRel, err := cleanRelDir("overlay", file.Overlay, "overlay")
 	if err != nil {
 		return Recipe{}, fmt.Errorf("%s: %w", id, err)
@@ -218,6 +230,7 @@ func load(root, yamlPath string) (Recipe, error) {
 		AI:          ai,
 		File:        yamlPath,
 		Repos:       repos,
+		Depends:     depends,
 	}, nil
 }
 
@@ -304,6 +317,26 @@ func cleanURLs(recipeName, field string, urls []string) ([]string, error) {
 		}
 		seen[raw] = true
 		out = append(out, raw)
+	}
+	return out, nil
+}
+
+func cleanDepends(recipeName string, deps []string) ([]string, error) {
+	if deps == nil {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(deps))
+	for _, dep := range deps {
+		dep = strings.TrimSpace(dep)
+		if dep == "" || strings.ContainsAny(dep, " \t\\") {
+			return nil, fmt.Errorf("%s: invalid dependency %q", recipeName, dep)
+		}
+		if seen[dep] {
+			return nil, fmt.Errorf("%s: duplicate dependency %s", recipeName, dep)
+		}
+		seen[dep] = true
+		out = append(out, dep)
 	}
 	return out, nil
 }
@@ -416,6 +449,101 @@ func ValidVersion(s string) bool {
 		}
 	}
 	return true
+}
+
+// Order returns recipes so each dependency is built before the recipes that
+// need it. Recipes that do not depend on each other keep their incoming order.
+func Order(recipes []Recipe) ([]Recipe, error) {
+	byID := map[string]Recipe{}
+	index := map[string]int{}
+	indegree := map[string]int{}
+	for i, r := range recipes {
+		if _, ok := byID[r.ID]; ok {
+			return nil, fmt.Errorf("duplicate recipe %s", r.ID)
+		}
+		byID[r.ID] = r
+		index[r.ID] = i
+		indegree[r.ID] = 0
+	}
+	dependents := map[string][]string{}
+	for _, r := range recipes {
+		seen := map[string]bool{}
+		for _, dep := range r.Depends {
+			if dep == r.ID {
+				return nil, fmt.Errorf("%s: depends on itself", r.ID)
+			}
+			if seen[dep] {
+				return nil, fmt.Errorf("%s: duplicate dependency %s", r.ID, dep)
+			}
+			seen[dep] = true
+			other, ok := byID[dep]
+			if !ok {
+				return nil, fmt.Errorf("%s: dependency %s is not a recipe", r.ID, dep)
+			}
+			if missing := missingArches(other.Arches, r.Arches); len(missing) > 0 {
+				return nil, fmt.Errorf("%s: dependency %s does not build %s", r.ID, dep, strings.Join(missing, ", "))
+			}
+			indegree[r.ID]++
+			dependents[dep] = append(dependents[dep], r.ID)
+		}
+	}
+	var ready []string
+	for _, r := range recipes {
+		if indegree[r.ID] == 0 {
+			ready = append(ready, r.ID)
+		}
+	}
+	out := make([]Recipe, 0, len(recipes))
+	for len(ready) > 0 {
+		id := ready[0]
+		ready = ready[1:]
+		out = append(out, byID[id])
+		for _, child := range dependents[id] {
+			indegree[child]--
+			if indegree[child] == 0 {
+				ready = insertByIndex(ready, child, index)
+			}
+		}
+	}
+	if len(out) != len(recipes) {
+		var left []string
+		for id, n := range indegree {
+			if n > 0 {
+				left = append(left, id)
+			}
+		}
+		sort.Strings(left)
+		return nil, fmt.Errorf("recipe dependencies contain a cycle: %s", strings.Join(left, ", "))
+	}
+	return out, nil
+}
+
+func missingArches(have, need []string) []string {
+	got := map[string]bool{}
+	for _, arch := range have {
+		got[arch] = true
+	}
+	var missing []string
+	for _, arch := range need {
+		if !got[arch] {
+			missing = append(missing, arch)
+		}
+	}
+	return missing
+}
+
+func insertByIndex(ready []string, id string, index map[string]int) []string {
+	at := len(ready)
+	for i, cur := range ready {
+		if index[id] < index[cur] {
+			at = i
+			break
+		}
+	}
+	ready = append(ready, "")
+	copy(ready[at+1:], ready[at:])
+	ready[at] = id
+	return ready
 }
 
 func ArchArg(arches []string) string {

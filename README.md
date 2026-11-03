@@ -86,6 +86,8 @@ Recipes live in [ftuna-recipes](https://github.com/MrCyjaneK/ftuna-recipes). `FT
 
 `repos` is a list of extra https repositories installed into the SDK image before the build, as `.sfosbuild/image/00-ftuna-repos.sh`. `{version}` is the Sailfish OS version (`5.1.0.11`), `{release}` is major.minor (`5.1`), and `{arch}` is `aarch64`, `armv7hl`, or `i486`. A `{version}/{arch}` URL keeps the full version, which is what `https://repo-oss.ftuna.eu/{version}/{arch}/` uses. A `{version}_{arch}` URL follows Chum: from 4.6, `{version}` is major.minor, so `https://repo.sailfishos.org/obs/sailfishos:/chum/{version}_{arch}/` becomes `5.1_aarch64`. Append `;` and an https signing-key URL, for example `https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key`. That key is set as `gpgkey=` so zypper imports it when the repository is refreshed. Changing `repos` rebuilds that package.
 
+`depends` lists recipe IDs that this package builds on. Go 1.19 lists `github.com/golang/go/go1_18`, and Go 1.21 lists `github.com/golang/go/go1_19`. `all` builds a dependency first and publishes it before the next recipe starts, so the dependent build can install the new RPMs. A dependency that failed is not followed by its dependents. Changing a dependency rebuilds every recipe that depends on it, including indirectly: a Go 1.18 change rebuilds Go 1.19 and then Go 1.21. A dependency has to build every architecture the dependent builds. Cycles are rejected.
+
 The Sailfish OS version is an argument and applies to every recipe. `.env` is read from the working directory.
 
 ```text
@@ -97,7 +99,7 @@ go run ./cmd/ftuna scratch register
 go run ./cmd/ftuna scratch publish <dir> <name>
 ```
 
-`all` publishes `repo/ftuna-oss/<version>/` after each recipe, writes the signing key when it changed, and skips a recipe whose commit is already on S3. A stopped run keeps the packages already published. A single recipe takes a scratch name and publishes the RPMs it produced to `scratchpad-repo.ftuna.eu/<account>/<name>/`. Publishing that name again replaces the repo.
+`all` publishes `repo/ftuna-oss/<version>/` after each recipe, in dependency order, writes the signing key when it changed, and skips a recipe whose commit is already on S3. A stopped run keeps the packages already published. A single recipe takes a scratch name and publishes the RPMs it produced to `scratchpad-repo.ftuna.eu/<account>/<name>/`. Publishing that name again replaces the repo.
 
 ## Website
 

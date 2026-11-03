@@ -183,15 +183,15 @@ func runBuild(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if force {
-		return fmt.Errorf("--force does not apply")
-	}
 	if len(rest) == 1 && rest[0] == "all" {
 		store, err := openStore(true)
 		if err != nil {
 			return err
 		}
-		return pipeline.All(ctx, store, version)
+		return pipeline.All(ctx, store, version, force)
+	}
+	if force {
+		return fmt.Errorf("--force does not apply")
 	}
 	if len(rest) != 2 {
 		usage(os.Stderr)
@@ -307,7 +307,7 @@ func splitArgs(args []string, allowAll bool) (force, all bool, rest []string, er
 
 func usage(w io.Writer) {
 	fmt.Fprintf(w, `Usage:
-  ftuna <sfos-version> all
+  ftuna <sfos-version> all [--force]
   ftuna <sfos-version> <recipe> <name>
   ftuna gc
   ftuna openrepos users [--force]
@@ -321,7 +321,8 @@ func usage(w io.Writer) {
 
 all       Build every recipe for that Sailfish OS version and publish
           repo/ftuna-oss/<version>/<arch>/. Recipes already stored for
-          the same commit are not built again.
+          the same commit are not built again. --force builds recipes
+          whose last attempt failed.
 <recipe> <name>
           Build one recipe and publish the RPMs it produced at
           scratchpad-repo.ftuna.eu/<account>/<name>/. <name> is the

@@ -24,7 +24,7 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/store/s3store"
 )
 
-func All(ctx context.Context, store *s3store.Store, version string) error {
+func All(ctx context.Context, store *s3store.Store, version string, force bool) error {
 	recipesRoot, err := recipe.Root()
 	if err != nil {
 		return err
@@ -45,7 +45,7 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 		return err
 	}
 	exists := headExists(ctx, store)
-	doc, build, err := prepareStatus(recipes, man, prev, version, exists)
+	doc, build, err := prepareStatus(recipes, man, prev, version, exists, force)
 	if err != nil {
 		return err
 	}
@@ -121,8 +121,35 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 	for i := range doc.Recipes {
 		index[doc.Recipes[i].ID] = i
 	}
+	ordered, err := recipe.Order(recipes)
+	if err != nil {
+		return err
+	}
+	buildSet := map[string]bool{}
 	for _, r := range build {
+		buildSet[r.ID] = true
+	}
+	// current recipes are already published. A dependency that fails, or that
+	// this run did not build, leaves its dependents unbuilt instead of letting
+	// them fail while installing a package that is not in the repo yet.
+	published := map[string]bool{}
+	for _, entry := range doc.Recipes {
+		if entry.State == stateCurrent {
+			published[entry.ID] = true
+		}
+	}
+	for _, r := range ordered {
+		if !buildSet[r.ID] {
+			continue
+		}
 		i := index[r.ID]
+		if dep := unmetDependency(r, published); dep != "" {
+			noteFailure(&doc, i, fmt.Errorf("dependency %s is not built", dep), "")
+			if err := putStatus(ctx, store, version, &doc); err != nil {
+				return err
+			}
+			continue
+		}
 		doc.Recipes[i].State = stateBuilding
 		if err := putStatus(ctx, store, version, &doc); err != nil {
 			return err
@@ -154,6 +181,7 @@ func All(ctx context.Context, store *s3store.Store, version string) error {
 			}
 		}
 		noteBuilt(&doc, i, r, placed)
+		published[r.ID] = true
 		log.Printf("publish %s", r.ID)
 		if err := publishSnapshot(ctx, store, entity, version, work, recipesRoot, recipes, &man, before, local, rewrite, arches, &doc); err != nil {
 			return err
@@ -355,6 +383,16 @@ func buildAndQuery(ctx context.Context, r recipe.Recipe, version, work string) (
 		outRPMs = append(outRPMs, rpm)
 	}
 	return outRPMs, buildLog, nil
+}
+
+// unmetDependency is the first dependency that is not already published.
+func unmetDependency(r recipe.Recipe, ready map[string]bool) string {
+	for _, dep := range r.Depends {
+		if !ready[dep] {
+			return dep
+		}
+	}
+	return ""
 }
 
 func headExists(ctx context.Context, store *s3store.Store) func(string) (bool, error) {

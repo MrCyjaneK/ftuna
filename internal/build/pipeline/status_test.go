@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mrcyjanek/ftuna/internal/build/recipe"
@@ -157,7 +158,7 @@ func TestPrepareStatusSkipsUnchangedFailure(t *testing.T) {
 		Log:         "gcc: error: boom",
 	}}}
 	exists := func(string) (bool, error) { return false, nil }
-	doc, build, err := prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.11", exists)
+	doc, build, err := prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.11", exists, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func TestPrepareStatusSkipsUnchangedFailure(t *testing.T) {
 		t.Fatalf("json dropped the failure: %+v", decoded.Recipes[0])
 	}
 
-	doc, build, err = prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.12", exists)
+	doc, build, err = prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.12", exists, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,12 +203,22 @@ func TestPrepareStatusSkipsUnchangedFailure(t *testing.T) {
 	}
 
 	prev.Recipes[0].State = stateBuilt
-	doc, build, err = prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.11", exists)
+	doc, build, err = prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.11", exists, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(build) != 1 || doc.Recipes[0].State != statePending {
 		t.Fatal("a successful record must not suppress a build")
+	}
+
+	prev.Recipes[0].State = stateFailed
+	prev.Recipes[0].Fingerprint = fp
+	doc, build, err = prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.11", exists, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(build) != 1 || doc.Recipes[0].State != statePending {
+		t.Fatal("--force should retry a skipped failure")
 	}
 }
 
@@ -225,7 +236,7 @@ func TestPrepareStatusCurrentSkipsBuild(t *testing.T) {
 	}}
 	doc, build, err := prepareStatus([]recipe.Recipe{r}, man, Status{}, "5.1.0.11", func(string) (bool, error) {
 		return true, nil
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +267,7 @@ func TestPrepareStatusRebuildsWhenFingerprintChanges(t *testing.T) {
 	}}}
 	doc, build, err := prepareStatus([]recipe.Recipe{r}, man, prev, "5.1.0.11", func(string) (bool, error) {
 		return true, nil
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +300,7 @@ func TestPrepareStatusKeepsPublishedRPMs(t *testing.T) {
 	}}}
 	doc, build, err := prepareStatus([]recipe.Recipe{r}, man, prev, "5.1.0.11", func(string) (bool, error) {
 		return true, nil
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,6 +314,153 @@ func TestPrepareStatusKeepsPublishedRPMs(t *testing.T) {
 	if got.RPMs["aarch64"][0].Name != "app" || got.Error != "compile failed" {
 		t.Fatalf("status %+v", got)
 	}
+}
+
+func TestGoBootstrapRebuildsDependents(t *testing.T) {
+	root := t.TempDir()
+	write := func(id, dep string) recipe.Recipe {
+		t.Helper()
+		dir := filepath.Join(root, filepath.FromSlash(id))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "name: " + id + "\ncommit: 0123456789abcdef0123456789abcdef01234567\n"
+		yamlPath := filepath.Join(dir, "build.yaml")
+		if err := os.WriteFile(yamlPath, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		r := recipe.Recipe{
+			ID:      id,
+			Name:    id,
+			File:    yamlPath,
+			Patches: filepath.Join(dir, "patches"),
+			Overlay: filepath.Join(dir, "overlay"),
+			Path:    ".",
+			Arches:  append([]string{}, recipe.AllArches...),
+			Commit:  "0123456789abcdef0123456789abcdef01234567",
+		}
+		if dep != "" {
+			r.Depends = []string{dep}
+		}
+		return r
+	}
+	go18 := write("github.com/golang/go/go1_18", "")
+	go19 := write("github.com/golang/go/go1_19", go18.ID)
+	go21 := write("github.com/golang/go/go1_21", go19.ID)
+	other := write("github.com/example/app", "")
+	recipes := []recipe.Recipe{other, go18, go19, go21}
+
+	fps, err := Fingerprints(recipes, "5.1.0.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := Fingerprint(go18, "5.1.0.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fps[go18.ID] != own || fps[other.ID] == "" {
+		t.Fatal("a recipe with no dependencies must keep its own fingerprint")
+	}
+	if fps[go19.ID] == fps[go18.ID] || fps[go21.ID] == fps[go19.ID] {
+		t.Fatal("each Go in the bootstrap chain needs its own fingerprint")
+	}
+	if dep := unmetDependency(go19, map[string]bool{}); dep != go18.ID {
+		t.Fatalf("unmet %s", dep)
+	}
+	if dep := unmetDependency(go21, map[string]bool{go19.ID: true}); dep != "" {
+		t.Fatalf("go 1.21 should build once go 1.19 is published, got %s", dep)
+	}
+
+	man := publishedManifest(recipes)
+	prev := Status{Recipes: []StatusRecipe{
+		{ID: other.ID, State: stateCurrent, Fingerprint: fps[other.ID]},
+		{ID: go18.ID, State: stateCurrent, Fingerprint: fps[go18.ID]},
+		{ID: go19.ID, State: stateCurrent, Fingerprint: fps[go19.ID]},
+		{ID: go21.ID, State: stateSkipped, Fingerprint: fps[go21.ID], Error: "dependency was not built", FailedAt: "2026-10-22T14:36:08Z"},
+	}}
+	exists := func(string) (bool, error) { return true, nil }
+	doc, build, err := prepareStatus(recipes, man, prev, "5.1.0.11", exists, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(build) != 0 || doc.Recipes[3].State != stateSkipped {
+		t.Fatalf("unchanged chain should stay put, build %d state %s", len(build), doc.Recipes[3].State)
+	}
+
+	if err := os.WriteFile(go18.File, []byte("name: "+go18.ID+"\ncommit: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc, build, err = prepareStatus(recipes, man, prev, "5.1.0.11", exists, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, entry := range doc.Recipes {
+		got[entry.ID] = entry.State
+	}
+	if got[go18.ID] != statePending || got[go19.ID] != statePending || got[go21.ID] != statePending {
+		t.Fatalf("go chain should rebuild after go 1.18 changes: %+v", got)
+	}
+	if got[other.ID] != stateCurrent {
+		t.Fatalf("unrelated recipe state %s", got[other.ID])
+	}
+	if len(build) != 3 {
+		t.Fatalf("build %d", len(build))
+	}
+	ordered, err := recipe.Order(recipes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	pending := map[string]bool{}
+	for _, r := range build {
+		pending[r.ID] = true
+	}
+	for _, r := range ordered {
+		if pending[r.ID] {
+			ids = append(ids, r.ID)
+		}
+	}
+	want := []string{go18.ID, go19.ID, go21.ID}
+	if strings.Join(ids, " ") != strings.Join(want, " ") {
+		t.Fatalf("build order %v", ids)
+	}
+
+	if err := os.WriteFile(go18.File, []byte("name: "+go18.ID+"\ncommit: 0123456789abcdef0123456789abcdef01234567\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(go19.File, []byte("name: "+go19.ID+"\ncommit: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	doc, build, err = prepareStatus(recipes, man, prev, "5.1.0.11", exists, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = map[string]string{}
+	for _, entry := range doc.Recipes {
+		got[entry.ID] = entry.State
+	}
+	if got[go18.ID] != stateCurrent || got[other.ID] != stateCurrent {
+		t.Fatalf("go 1.18 and the unrelated recipe should stay current: %+v", got)
+	}
+	if got[go19.ID] != statePending || got[go21.ID] != statePending || len(build) != 2 {
+		t.Fatalf("go 1.19 change should rebuild go 1.21 only: %+v build %d", got, len(build))
+	}
+}
+
+func publishedManifest(recipes []recipe.Recipe) Manifest {
+	man := emptyManifest()
+	for _, r := range recipes {
+		arches := map[string]ArchBuild{}
+		for _, arch := range r.Arches {
+			arches[arch] = ArchBuild{RPMs: []RPMRec{{
+				File: r.ID + "/pkg." + arch + ".rpm",
+				Name: "pkg",
+			}}}
+		}
+		man.Recipes[r.ID] = RecipeBuild{Commit: r.Commit, Arches: arches}
+	}
+	return man
 }
 
 func TestPrepareStatusKeepsSkippedError(t *testing.T) {
@@ -321,7 +479,7 @@ func TestPrepareStatusKeepsSkippedError(t *testing.T) {
 	}}}
 	doc, build, err := prepareStatus([]recipe.Recipe{r}, emptyManifest(), prev, "5.1.0.11", func(string) (bool, error) {
 		return false, nil
-	})
+	}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
