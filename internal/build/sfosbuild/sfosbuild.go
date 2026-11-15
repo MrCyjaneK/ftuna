@@ -16,13 +16,16 @@ import (
 // logTailLimit is how much sfosbuild output is kept for status.json.
 const logTailLimit = 256 * 1024
 
-func Run(ctx context.Context, version, arches, project, outDir, buildPath string) (string, error) {
+func Run(ctx context.Context, version, arches, project, outDir, buildPath, commit string) (string, error) {
 	bin, err := exec.LookPath("sfosbuild")
 	if err != nil {
 		return "", fmt.Errorf("sfosbuild not on PATH")
 	}
 	if strings.TrimSpace(buildPath) == "" {
 		return "", fmt.Errorf("sfosbuild needs the directory that contains rpm/")
+	}
+	if strings.TrimSpace(commit) == "" {
+		return "", fmt.Errorf("sfosbuild needs the commit to stamp")
 	}
 	pkgs, err := packageFiles(project, buildPath)
 	if err != nil {
@@ -34,8 +37,10 @@ func Run(ctx context.Context, version, arches, project, outDir, buildPath string
 	tail := &tailWriter{limit: logTailLimit}
 	for _, pkg := range pkgs {
 		// Flags have to come before the version. sfosbuild stops parsing at the first positional argument.
-		cmd := exec.CommandContext(ctx, bin, "-o", outDir, version, arches, pkg)
+		cmd := exec.CommandContext(ctx, bin, commandArgs(outDir, version, arches, pkg)...)
 		cmd.Dir = project
+		// HEAD is past the pinned commit: Prepare commits patches, the overlay, and .sfosbuild.
+		cmd.Env = append(os.Environ(), "SFOSBUILD_RELEASE_COMMIT="+commit)
 		// Stdout and stderr are written from different goroutines.
 		cmd.Stdout = io.MultiWriter(os.Stdout, tail)
 		cmd.Stderr = io.MultiWriter(os.Stderr, tail)
@@ -44,6 +49,12 @@ func Run(ctx context.Context, version, arches, project, outDir, buildPath string
 		}
 	}
 	return tail.String(), nil
+}
+
+// commandArgs is the sfosbuild invocation. --stamp appends the committer time
+// and rev-list count of SFOSBUILD_RELEASE_COMMIT to Release.
+func commandArgs(outDir, version, arches, pkg string) []string {
+	return []string{"-o", outDir, "--stamp", version, arches, pkg}
 }
 
 // packageFiles returns the yaml or spec files sfosbuild builds, relative to project.
