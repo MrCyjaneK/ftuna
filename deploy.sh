@@ -32,8 +32,8 @@ iter=0
     echo "> ftuna scan $FTUNA_RATINGS"
     $ftuna scan "$FTUNA_RATINGS"
 #    if (( iter % 6 == 0 )); then
-        echo '> ftuna openrepos mirror --all'
-        $ftuna openrepos mirror --all
+        # echo '> ftuna openrepos mirror --all'
+        # $ftuna openrepos mirror --all
         pushd "$FTUNA_RATINGS"
             if [ -n "$(git status --porcelain)" ]; then
                 git add .
