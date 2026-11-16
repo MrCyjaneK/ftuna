@@ -84,6 +84,36 @@ func Root() (string, error) {
 	return dir, nil
 }
 
+// Load reads one recipe yaml. path is absolute or relative to the working
+// directory, and the file must be inside FTUNA_RECIPES. The recipe ID is
+// the yaml's directory under that checkout: build.yaml keeps the directory,
+// and libfoo.yaml in the same directory is <dir>/libfoo.
+func Load(path string) (Recipe, error) {
+	root, err := Root()
+	if err != nil {
+		return Recipe{}, err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return Recipe{}, err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return Recipe{}, err
+	}
+	st, err := os.Stat(abs)
+	if err != nil {
+		return Recipe{}, err
+	}
+	if st.IsDir() {
+		return Recipe{}, fmt.Errorf("%s is a directory", path)
+	}
+	if !strings.HasSuffix(abs, ".yaml") {
+		return Recipe{}, fmt.Errorf("%s is not a yaml file", path)
+	}
+	return load(root, abs)
+}
+
 func Discover(root string) ([]Recipe, error) {
 	var out []Recipe
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {

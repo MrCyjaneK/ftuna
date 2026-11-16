@@ -195,7 +195,7 @@ func runBuild(ctx context.Context, args []string) error {
 	}
 	if len(rest) != 2 {
 		usage(os.Stderr)
-		return fmt.Errorf("usage: ftuna <sfos-version> all | ftuna <sfos-version> <recipe> <name>")
+		return fmt.Errorf("usage: ftuna <sfos-version> all | ftuna <sfos-version> <yaml> <name>")
 	}
 	if err := scratch.CheckName(rest[1]); err != nil {
 		return err
@@ -308,7 +308,7 @@ func splitArgs(args []string, allowAll bool) (force, all bool, rest []string, er
 func usage(w io.Writer) {
 	fmt.Fprintf(w, `Usage:
   ftuna <sfos-version> all [--force]
-  ftuna <sfos-version> <recipe> <name>
+  ftuna <sfos-version> <yaml> <name>
   ftuna gc
   ftuna openrepos users [--force]
   ftuna openrepos mirror <publisher> [--force]
@@ -323,9 +323,11 @@ all       Build every recipe for that Sailfish OS version and publish
           repo/ftuna-oss/<version>/<arch>/. Recipes already stored for
           the same commit are not built again. --force builds recipes
           whose last attempt failed.
-<recipe> <name>
-          Build one recipe and publish the RPMs it produced at
-          scratchpad-repo.ftuna.eu/<account>/<name>/. <name> is the
+<yaml> <name>
+          Build the recipe at <yaml> and publish the RPMs it produced at
+          scratchpad-repo.ftuna.eu/<account>/<name>/. <yaml> is a path to
+          a recipe file inside FTUNA_RECIPES, such as
+          github.com/michal-szczepaniak/yottagram/build.yaml. <name> is the
           directory under the account, 1-80 characters of a-z, 0-9, _,
           or -. Publishing the same name again replaces that repo, so a
           phone that added it keeps receiving updates. The repo expires

@@ -336,6 +336,59 @@ func TestRejectsRepoURL(t *testing.T) {
 	}
 }
 
+func TestLoadYAMLPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "michal-szczepaniak", "yottagram")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "name: Yottagram\ncommit: aca93b6cfecb02e9d13955e71b51460e7d303424\nai: H\ndescription: Telegram client\npath: .\n"
+	file := filepath.Join(dir, "build.yaml")
+	if err := os.WriteFile(file, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	extra := filepath.Join(dir, "libyotti.yaml")
+	if err := os.WriteFile(extra, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FTUNA_RECIPES", root)
+
+	got, err := Load(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "github.com/michal-szczepaniak/yottagram" || got.File != file {
+		t.Fatalf("id %s file %s", got.ID, got.File)
+	}
+
+	t.Chdir(root)
+	got, err = Load(filepath.Join("github.com", "michal-szczepaniak", "yottagram", "libyotti.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "github.com/michal-szczepaniak/yottagram/libyotti" {
+		t.Fatalf("id %s", got.ID)
+	}
+
+	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("directory: %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "build.yaml")
+	if err := os.WriteFile(outside, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(outside); err == nil || !strings.Contains(err.Error(), "not under") {
+		t.Fatalf("outside: %v", err)
+	}
+	notes := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(notes, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(notes); err == nil || !strings.Contains(err.Error(), "yaml") {
+		t.Fatalf("txt: %v", err)
+	}
+}
+
 func TestRootFromEnv(t *testing.T) {
 	t.Setenv("FTUNA_RECIPES", "")
 	if _, err := Root(); err == nil {

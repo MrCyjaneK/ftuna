@@ -273,32 +273,24 @@ func publishKey(ctx context.Context, store *s3store.Store, entity *openpgp.Entit
 	return err
 }
 
-func One(ctx context.Context, version, name, id string) error {
+func One(ctx context.Context, version, yamlPath, id string) error {
 	if err := scratch.CheckName(id); err != nil {
 		return err
 	}
 	if _, err := scratch.LoadToken(); err != nil {
 		return fmt.Errorf("%w; run ftuna scratch register", err)
 	}
+	r, err := recipe.Load(yamlPath)
+	if err != nil {
+		return err
+	}
 	recipesRoot, err := recipe.Root()
 	if err != nil {
 		return err
 	}
-	recipes, err := recipe.Discover(recipesRoot)
+	recipesRoot, err = filepath.Abs(recipesRoot)
 	if err != nil {
 		return err
-	}
-	var r recipe.Recipe
-	found := false
-	for _, item := range recipes {
-		if item.ID == name {
-			r = item
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("unknown recipe %s", name)
 	}
 	work, err := os.MkdirTemp("", "ftuna-one-")
 	if err != nil {
