@@ -92,6 +92,7 @@ The Sailfish OS version is an argument and applies to every recipe. `.env` is re
 
 ```text
 go run ./cmd/ftuna 5.1.0.11 all
+go run ./cmd/ftuna 5.1.0.11 all --rebuild-failed
 go run ./cmd/ftuna 5.1.0.11 github.com/sailfishos/sailfish-components-gallery/build.yaml sailfish-components-gallery
 go run ./cmd/ftuna gc
 go run ./cmd/ftuna scan <dir>
@@ -99,7 +100,7 @@ go run ./cmd/ftuna scratch register
 go run ./cmd/ftuna scratch publish <dir> <name>
 ```
 
-`all` publishes `repo/ftuna-oss/<version>/` after each recipe, in dependency order, writes the signing key when it changed, and skips a recipe whose commit is already on S3. A stopped run keeps the packages already published. A single recipe takes a path to its yaml and a scratch name, and publishes the RPMs it produced to `scratchpad-repo.ftuna.eu/<account>/<name>/`. The yaml has to be inside `FTUNA_RECIPES`. Publishing that name again replaces the repo.
+`all` publishes `repo/ftuna-oss/<version>/` after each recipe, in dependency order, writes the signing key when it changed, and skips a recipe whose commit is already on S3. A recipe that failed is recorded in `status.json` and is not built again until its inputs change. `--rebuild-failed` builds those failed and skipped recipes again, including when the last successful publish of the same commit is still in the repo. `--force` does the same. A stopped run keeps the packages already published. A single recipe takes a path to its yaml and a scratch name, and publishes the RPMs it produced to `scratchpad-repo.ftuna.eu/<account>/<name>/`. The yaml has to be inside `FTUNA_RECIPES`. Publishing that name again replaces the repo.
 
 ## Website
 

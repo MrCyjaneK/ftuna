@@ -16,19 +16,21 @@ export FTUNA_RATINGS
 export FTUNA_OSS_GPG_PRIVATE_KEY
 
 iter=0
-#    echo '> ftuna 5.1.0.11 all'
-#    $ftuna 5.1.0.11 all
+for version in 5.1.0.11 5.2.0.22;
+do
+#    echo "> ftuna $version all"
+#    $ftuna $version all
 #    exit $?
 # while true; do
 #    sleep 600
 #    echo "Next run in 10 minutes"
     iter=$((iter + 1))
-    echo '> ftuna 5.1.0.11 all'
+    echo "> ftuna $version all"
     pushd "$FTUNA_RECIPES"
         git pull
     popd
-    echo '> ftuna 5.1.0.11 all'
-    $ftuna 5.1.0.11 all
+    echo "> ftuna $version all"
+    $ftuna $version all
     echo "> ftuna scan $FTUNA_RATINGS"
     $ftuna scan "$FTUNA_RATINGS"
 #    if (( iter % 6 == 0 )); then
@@ -43,3 +45,4 @@ iter=0
         popd
 #    fi
 # done
+done

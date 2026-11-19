@@ -218,7 +218,67 @@ func TestPrepareStatusSkipsUnchangedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(build) != 1 || doc.Recipes[0].State != statePending {
-		t.Fatal("--force should retry a skipped failure")
+		t.Fatal("--rebuild-failed should retry a skipped failure")
+	}
+}
+
+func TestPrepareStatusRebuildFailedKeepsCurrent(t *testing.T) {
+	r := testRecipe(t)
+	fp, err := Fingerprint(r, "5.1.0.11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	man := Manifest{Recipes: map[string]RecipeBuild{
+		r.ID: {
+			Commit: r.Commit,
+			Arches: map[string]ArchBuild{
+				"aarch64": {RPMs: []RPMRec{{File: r.ID + "/app.aarch64.rpm", Name: "app"}}},
+				"armv7hl": {RPMs: []RPMRec{{File: r.ID + "/app.armv7hl.rpm", Name: "app"}}},
+				"i486":    {RPMs: []RPMRec{{File: r.ID + "/app.i486.rpm", Name: "app"}}},
+			},
+		},
+	}}
+	prev := Status{Recipes: []StatusRecipe{{
+		ID:          r.ID,
+		State:       stateFailed,
+		Fingerprint: fp,
+		Error:       "compile failed",
+		FailedAt:    "2026-03-04T05:06:07Z",
+		Log:         "error: still broken",
+	}}}
+	exists := func(string) (bool, error) { return true, nil }
+	doc, build, err := prepareStatus([]recipe.Recipe{r}, man, prev, "5.1.0.11", exists, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(build) != 0 || doc.Recipes[0].State != stateSkipped {
+		t.Fatalf("recorded failure should stay skipped, state %s build %d", doc.Recipes[0].State, len(build))
+	}
+	if doc.Recipes[0].Error != "compile failed" || doc.Recipes[0].RPMs["aarch64"][0].Name != "app" {
+		t.Fatalf("failure and published rpms should stay: %+v", doc.Recipes[0])
+	}
+
+	doc, build, err = prepareStatus([]recipe.Recipe{r}, man, prev, "5.1.0.11", exists, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(build) != 1 || doc.Recipes[0].State != statePending {
+		t.Fatalf("--rebuild-failed should build a recorded failure, state %s build %d", doc.Recipes[0].State, len(build))
+	}
+	if doc.Recipes[0].Error != "" || doc.Recipes[0].Log != "" || doc.Recipes[0].FailedAt != "" {
+		t.Fatalf("retry should drop the old error: %+v", doc.Recipes[0])
+	}
+	if doc.Recipes[0].PublishedCommit != r.Commit || doc.Recipes[0].RPMs["aarch64"][0].Name != "app" {
+		t.Fatalf("published packages should stay visible while rebuilding: %+v", doc.Recipes[0])
+	}
+
+	prev.Recipes[0].State = stateCurrent
+	doc, build, err = prepareStatus([]recipe.Recipe{r}, man, prev, "5.1.0.11", exists, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(build) != 0 || doc.Recipes[0].State != stateCurrent {
+		t.Fatalf("--rebuild-failed must leave a current recipe alone, state %s build %d", doc.Recipes[0].State, len(build))
 	}
 }
 

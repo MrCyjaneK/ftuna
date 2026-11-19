@@ -265,7 +265,9 @@ func failureUnchanged(prev StatusRecipe, fingerprint string) bool {
 // prepareStatus decides each recipe's state from the previous status file and
 // the manifest. Recipes in the returned slice are the ones All should build.
 // An unchanged failure is skipped and keeps its error, log, and failed_at.
-func prepareStatus(recipes []recipe.Recipe, man Manifest, prev Status, version string, exists func(string) (bool, error), force bool) (Status, []recipe.Recipe, error) {
+// rebuildFailed queues that failure again, including when the manifest still
+// has the last successful publish of the same commit.
+func prepareStatus(recipes []recipe.Recipe, man Manifest, prev Status, version string, exists func(string) (bool, error), rebuildFailed bool) (Status, []recipe.Recipe, error) {
 	prevByID := map[string]StatusRecipe{}
 	for _, entry := range prev.Recipes {
 		prevByID[entry.ID] = entry
@@ -283,13 +285,20 @@ func prepareStatus(recipes []recipe.Recipe, man Manifest, prev Status, version s
 	for _, r := range recipes {
 		fp := fps[r.ID]
 		entry := statusEntry(r, fp)
-		if old, ok := prevByID[r.ID]; ok && !force && failureUnchanged(old, fp) {
-			entry.State = stateSkipped
-			entry.Error = old.Error
-			entry.Log = old.Log
-			entry.FailedAt = old.FailedAt
+		if old, ok := prevByID[r.ID]; ok && failureUnchanged(old, fp) {
+			if !rebuildFailed {
+				entry.State = stateSkipped
+				entry.Error = old.Error
+				entry.Log = old.Log
+				entry.FailedAt = old.FailedAt
+				applyPublished(&entry, man)
+				doc.Recipes = append(doc.Recipes, entry)
+				continue
+			}
 			applyPublished(&entry, man)
+			entry.State = statePending
 			doc.Recipes = append(doc.Recipes, entry)
+			build = append(build, r)
 			continue
 		}
 		need, err := NeedsBuild(r, man, version, false, exists)

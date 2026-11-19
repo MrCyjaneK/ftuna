@@ -179,7 +179,7 @@ func runBuild(ctx context.Context, args []string) error {
 	if !recipe.ValidVersion(version) {
 		return fmt.Errorf("sfos version must look like 5.1.0.11, got %q", version)
 	}
-	force, _, rest, err := splitArgs(args[1:], false)
+	force, _, rebuildFailed, rest, err := splitArgs(args[1:], false, true)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,10 @@ func runBuild(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		return pipeline.All(ctx, store, version, force)
+		return pipeline.All(ctx, store, version, force || rebuildFailed)
+	}
+	if rebuildFailed {
+		return fmt.Errorf("--rebuild-failed does not apply")
 	}
 	if force {
 		return fmt.Errorf("--force does not apply")
@@ -222,7 +225,7 @@ func runOpenRepos(ctx context.Context, args []string) error {
 		}
 		return openrepos.PublishCatalog(ctx, store)
 	case "extract":
-		force, _, rest, err := splitArgs(args[2:], false)
+		force, _, _, rest, err := splitArgs(args[2:], false, false)
 		if err != nil {
 			return err
 		}
@@ -231,7 +234,7 @@ func runOpenRepos(ctx context.Context, args []string) error {
 		}
 		return openrepos.Extract(ctx, store, force)
 	case "users":
-		force, _, rest, err := splitArgs(args[2:], false)
+		force, _, _, rest, err := splitArgs(args[2:], false, false)
 		if err != nil {
 			return err
 		}
@@ -240,7 +243,7 @@ func runOpenRepos(ctx context.Context, args []string) error {
 		}
 		return openrepos.SyncUsers(ctx, store, force)
 	case "mirror":
-		force, all, rest, err := splitArgs(args[2:], true)
+		force, all, _, rest, err := splitArgs(args[2:], true, false)
 		if err != nil {
 			return err
 		}
@@ -284,30 +287,36 @@ func openStore(signing bool) (*s3store.Store, error) {
 	return s3store.FromEnv()
 }
 
-// splitArgs accepts --force, and --all when allowAll is set.
-func splitArgs(args []string, allowAll bool) (force, all bool, rest []string, err error) {
+// splitArgs accepts --force, --all when allowAll is set, and --rebuild-failed
+// when allowRebuildFailed is set.
+func splitArgs(args []string, allowAll, allowRebuildFailed bool) (force, all, rebuildFailed bool, rest []string, err error) {
 	for _, arg := range args {
 		switch arg {
 		case "--force":
 			force = true
+		case "--rebuild-failed":
+			if !allowRebuildFailed {
+				return false, false, false, nil, fmt.Errorf("unknown flag %s", arg)
+			}
+			rebuildFailed = true
 		case "--all":
 			if !allowAll {
-				return false, false, nil, fmt.Errorf("unknown flag %s", arg)
+				return false, false, false, nil, fmt.Errorf("unknown flag %s", arg)
 			}
 			all = true
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return false, false, nil, fmt.Errorf("unknown flag %s", arg)
+				return false, false, false, nil, fmt.Errorf("unknown flag %s", arg)
 			}
 			rest = append(rest, arg)
 		}
 	}
-	return force, all, rest, nil
+	return force, all, rebuildFailed, rest, nil
 }
 
 func usage(w io.Writer) {
 	fmt.Fprintf(w, `Usage:
-  ftuna <sfos-version> all [--force]
+  ftuna <sfos-version> all [--rebuild-failed]
   ftuna <sfos-version> <yaml> <name>
   ftuna gc
   ftuna openrepos users [--force]
@@ -321,8 +330,10 @@ func usage(w io.Writer) {
 
 all       Build every recipe for that Sailfish OS version and publish
           repo/ftuna-oss/<version>/<arch>/. Recipes already stored for
-          the same commit are not built again. --force builds recipes
-          whose last attempt failed.
+          the same commit are not built again. A recipe whose status.json
+          entry is failed or skipped stays that way until its inputs
+          change. --rebuild-failed builds those recipes again. --force
+          does the same.
 <yaml> <name>
           Build the recipe at <yaml> and publish the RPMs it produced at
           scratchpad-repo.ftuna.eu/<account>/<name>/. <yaml> is a path to

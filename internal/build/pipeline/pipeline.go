@@ -24,7 +24,7 @@ import (
 	"github.com/mrcyjanek/ftuna/internal/store/s3store"
 )
 
-func All(ctx context.Context, store *s3store.Store, version string, force bool) error {
+func All(ctx context.Context, store *s3store.Store, version string, rebuildFailed bool) error {
 	recipesRoot, err := recipe.Root()
 	if err != nil {
 		return err
@@ -45,9 +45,17 @@ func All(ctx context.Context, store *s3store.Store, version string, force bool) 
 		return err
 	}
 	exists := headExists(ctx, store)
-	doc, build, err := prepareStatus(recipes, man, prev, version, exists, force)
+	doc, build, err := prepareStatus(recipes, man, prev, version, exists, rebuildFailed)
 	if err != nil {
 		return err
+	}
+	wasFailure := map[string]bool{}
+	if rebuildFailed {
+		for _, entry := range prev.Recipes {
+			if entry.State == stateFailed || entry.State == stateSkipped {
+				wasFailure[entry.ID] = true
+			}
+		}
 	}
 	for _, entry := range doc.Recipes {
 		switch entry.State {
@@ -55,6 +63,10 @@ func All(ctx context.Context, store *s3store.Store, version string, force bool) 
 			log.Printf("skip %s unchanged failure", entry.ID)
 		case stateCurrent:
 			log.Printf("skip %s", entry.ID)
+		case statePending:
+			if wasFailure[entry.ID] {
+				log.Printf("rebuild %s previous failure", entry.ID)
+			}
 		}
 	}
 	log.Printf("status https://repo-oss.ftuna.eu/%s/status.json", version)
