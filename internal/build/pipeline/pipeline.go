@@ -74,7 +74,7 @@ func All(ctx context.Context, store *s3store.Store, version string, rebuildFaile
 		return err
 	}
 	removed := Removed(recipes, man)
-	arches := unionArches(recipes)
+	arches := withSource(unionArches(recipes))
 	ready, err := RepoReady(version, arches, exists)
 	if err != nil {
 		return err
@@ -318,7 +318,10 @@ func One(ctx context.Context, version, yamlPath, id string) error {
 	if err != nil {
 		return fmt.Errorf("%s: %w", r.ID, err)
 	}
-	for _, arch := range r.Arches {
+	for _, arch := range withSource(r.Arches) {
+		if len(byArch[arch]) == 0 {
+			continue
+		}
 		if err := rpmmd.Write(filepath.Join(repoRoot, arch)); err != nil {
 			return err
 		}
@@ -369,8 +372,12 @@ func buildAndQuery(ctx context.Context, r recipe.Recipe, version, work string) (
 	if err := os.RemoveAll(out); err != nil {
 		return nil, "", err
 	}
-	log.Printf("sfosbuild --stamp %s %s %s %s", version, recipe.ArchArg(r.Arches), r.ID, r.Path)
-	buildLog, err := sfosbuild.Run(ctx, version, recipe.ArchArg(r.Arches), src, out, r.Path, r.Commit)
+	if r.Network {
+		log.Printf("sfosbuild --network --source --stamp %s %s %s %s", version, recipe.ArchArg(r.Arches), r.ID, r.Path)
+	} else {
+		log.Printf("sfosbuild --source --stamp %s %s %s %s", version, recipe.ArchArg(r.Arches), r.ID, r.Path)
+	}
+	buildLog, err := sfosbuild.Run(ctx, version, recipe.ArchArg(r.Arches), src, out, r.Path, r.Commit, r.Network)
 	if err != nil {
 		return nil, buildLog, err
 	}
@@ -442,13 +449,19 @@ func setRecipe(man *Manifest, r recipe.Recipe, byArch map[string][]deps.RPM) {
 		man.Recipes = map[string]RecipeBuild{}
 	}
 	rb := RecipeBuild{Commit: r.Commit, Repos: append([]string{}, r.Repos...), Arches: map[string]ArchBuild{}}
-	for _, arch := range r.Arches {
+	record := func(arch string) {
 		var recs []RPMRec
 		for _, rpm := range byArch[arch] {
 			recs = append(recs, fromDeps(rpm))
 		}
 		sort.Slice(recs, func(i, j int) bool { return recs[i].File < recs[j].File })
 		rb.Arches[arch] = ArchBuild{RPMs: recs}
+	}
+	for _, arch := range r.Arches {
+		record(arch)
+	}
+	if len(byArch["src"]) > 0 {
+		record("src")
 	}
 	man.Recipes[r.ID] = rb
 }
@@ -667,9 +680,21 @@ func placeBuilt(outDir string, info []deps.RPM, recipeName string, arches []stri
 		if err != nil {
 			return nil, err
 		}
-		src := filepath.Join(outDir, filepath.Base(rpm.File))
-		if _, err := os.Stat(src); err != nil {
+		srcPath := filepath.Join(outDir, filepath.Base(rpm.File))
+		if _, err := os.Stat(srcPath); err != nil {
 			return nil, fmt.Errorf("rpm %s: %w", rpm.File, err)
+		}
+		rel := recipeName + "/" + filepath.Base(rpm.File)
+		placed := rpm
+		placed.File = rel
+		// A source RPM is built once per package. It lives in the src
+		// repository, not beside the binaries a phone installs.
+		if arch == "src" {
+			if err := copyFile(srcPath, filepath.Join(repoRoot, "src", filepath.FromSlash(rel))); err != nil {
+				return nil, err
+			}
+			got["src"] = append(got["src"], placed)
+			continue
 		}
 		targets := []string{arch}
 		if arch == "noarch" {
@@ -677,11 +702,8 @@ func placeBuilt(outDir string, info []deps.RPM, recipeName string, arches []stri
 		} else if !want[arch] {
 			return nil, fmt.Errorf("unexpected arch %s in %s", arch, rpm.File)
 		}
-		rel := recipeName + "/" + filepath.Base(rpm.File)
-		placed := rpm
-		placed.File = rel
 		for _, arch := range targets {
-			if err := copyFile(src, filepath.Join(repoRoot, arch, filepath.FromSlash(rel))); err != nil {
+			if err := copyFile(srcPath, filepath.Join(repoRoot, arch, filepath.FromSlash(rel))); err != nil {
 				return nil, err
 			}
 			got[arch] = append(got[arch], placed)
@@ -691,6 +713,9 @@ func placeBuilt(outDir string, info []deps.RPM, recipeName string, arches []stri
 		if len(got[arch]) == 0 {
 			return nil, fmt.Errorf("no rpms for %s", arch)
 		}
+	}
+	if len(got["src"]) == 0 {
+		return nil, fmt.Errorf("no source rpm")
 	}
 	return got, nil
 }
@@ -841,7 +866,12 @@ func scratchPathOK(name string) bool {
 		return true
 	}
 	parts := strings.Split(name, "/")
-	if len(parts) < 2 || (parts[0] != "aarch64" && parts[0] != "armv7hl" && parts[0] != "i486") {
+	switch parts[0] {
+	case "aarch64", "armv7hl", "i486", "src":
+	default:
+		return false
+	}
+	if len(parts) < 2 {
 		return false
 	}
 	if parts[1] == "repodata" {

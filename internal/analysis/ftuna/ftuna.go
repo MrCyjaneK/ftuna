@@ -18,8 +18,8 @@ import (
 // Check inspects the object key. Packages outside repo/ftuna-oss/ and scratch/
 // abstain. Detail on ftuna.built is clean, hooks, or unknown.
 // ftuna.image lists .sfosbuild/image entry names, one per line.
-// A recipe with no image hooks is green. Hooks are red. A recipe that
-// cannot be read is yellow.
+// A recipe with no image hooks and no network build is green. Hooks and
+// network are red. A recipe that cannot be read is yellow.
 func Check(key, recipesRoot string) []check.Issue {
 	id, built := recipeID(key)
 	if !built {
@@ -39,20 +39,64 @@ func Check(key, recipesRoot string) []check.Issue {
 	if err != nil {
 		return []check.Issue{builtIssue}
 	}
-	if len(names) == 0 {
+	online := recipeOnline(recipeDir)
+	if len(names) == 0 && !online {
 		builtIssue.Detail = "clean"
 		builtIssue.Color = check.ColorGreen
 		return []check.Issue{builtIssue}
 	}
-	builtIssue.Detail = "hooks"
-	builtIssue.Color = check.ColorRed
-	return []check.Issue{builtIssue, {
-		Module: "ftuna",
-		Path:   id,
-		Code:   "ftuna.image",
-		Detail: strings.Join(names, "\n"),
-		Color:  check.ColorRed,
-	}}
+	var issues []check.Issue
+	if len(names) > 0 {
+		builtIssue.Detail = "hooks"
+		builtIssue.Color = check.ColorRed
+		issues = append(issues, builtIssue, check.Issue{
+			Module: "ftuna",
+			Path:   id,
+			Code:   "ftuna.image",
+			Detail: strings.Join(names, "\n"),
+			Color:  check.ColorRed,
+		})
+	}
+	if online {
+		if len(names) == 0 {
+			builtIssue.Detail = "online"
+			builtIssue.Color = check.ColorRed
+			issues = append(issues, builtIssue)
+		}
+		issues = append(issues, check.Issue{
+			Module: "ftuna",
+			Path:   id,
+			Code:   "ftuna.network",
+			Detail: "online",
+			Color:  check.ColorRed,
+		})
+	}
+	return issues
+}
+
+// recipeOnline reports whether any recipe yaml in dir sets network: true.
+// rpmbuild for that package is allowed to reach the internet.
+func recipeOnline(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		body, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			switch strings.TrimSpace(line) {
+			case "network: true", "network: yes":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 var (

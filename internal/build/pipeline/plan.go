@@ -90,6 +90,22 @@ func NeedsBuild(r recipe.Recipe, man Manifest, version string, force bool, exist
 			}
 		}
 	}
+	src := rb.Arches["src"]
+	if len(src.RPMs) == 0 {
+		return true, nil
+	}
+	for _, rpm := range src.RPMs {
+		if !strings.HasPrefix(rpm.File, r.ID+"/") || !strings.HasSuffix(rpm.File, ".src.rpm") {
+			return true, nil
+		}
+		ok, err := exists(ArchPrefix(version, "src") + rpm.File)
+		if err != nil {
+			return false, err
+		}
+		if !ok {
+			return true, nil
+		}
+	}
 	return false, nil
 }
 
@@ -128,6 +144,18 @@ func Removed(recipes []recipe.Recipe, man Manifest) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// withSource adds the source repository. Recipes still build aarch64,
+// armv7hl, and i486. The .src.rpm from each package is published once,
+// under src/, and is not copied into the binary repositories.
+func withSource(arches []string) []string {
+	for _, arch := range arches {
+		if arch == "src" {
+			return append([]string{}, arches...)
+		}
+	}
+	return append(append([]string{}, arches...), "src")
 }
 
 func unionArches(recipes []recipe.Recipe) []string {
@@ -173,7 +201,7 @@ func ArchOf(file string) (string, error) {
 	}
 	arch := name[i+1:]
 	switch arch {
-	case "aarch64", "armv7hl", "i486", "noarch":
+	case "aarch64", "armv7hl", "i486", "noarch", "src":
 		return arch, nil
 	default:
 		return "", fmt.Errorf("unknown arch %s in %s", arch, file)

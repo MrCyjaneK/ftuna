@@ -8,9 +8,18 @@ import (
 )
 
 func TestCommandArgsStampBeforeVersion(t *testing.T) {
-	args := commandArgs("/tmp/rpms", "5.1.0.11", "aarch64,armv7hl,i486", "rpm/app.yaml")
+	args := commandArgs("/tmp/rpms", "5.1.0.11", "aarch64,armv7hl,i486", "rpm/app.yaml", false)
 	got := strings.Join(args, " ")
-	want := "-o /tmp/rpms --stamp 5.1.0.11 aarch64,armv7hl,i486 rpm/app.yaml"
+	want := "-o /tmp/rpms --source --stamp 5.1.0.11 aarch64,armv7hl,i486 rpm/app.yaml"
+	if got != want {
+		t.Fatalf("args %q", got)
+	}
+}
+
+func TestCommandArgsNetworkBeforeVersion(t *testing.T) {
+	args := commandArgs("/tmp/rpms", "5.1.0.11", "aarch64", "rpm/depot-tools.spec", true)
+	got := strings.Join(args, " ")
+	want := "-o /tmp/rpms --network --source --stamp 5.1.0.11 aarch64 rpm/depot-tools.spec"
 	if got != want {
 		t.Fatalf("args %q", got)
 	}

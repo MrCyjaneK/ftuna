@@ -16,7 +16,8 @@ export FTUNA_RATINGS
 export FTUNA_OSS_GPG_PRIVATE_KEY
 
 iter=0
-for version in 5.1.0.11 5.2.0.22;
+#for version in 5.1.0.11 5.2.0.22;
+for version in 5.2.0.22;
 do
 #    echo "> ftuna $version all"
 #    $ftuna $version all
@@ -30,7 +31,7 @@ do
         git pull
     popd
     echo "> ftuna $version all"
-    $ftuna $version all
+    $ftuna $version all --rebuild-failed
     echo "> ftuna scan $FTUNA_RATINGS"
     $ftuna scan "$FTUNA_RATINGS"
 #    if (( iter % 6 == 0 )); then

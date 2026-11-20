@@ -388,8 +388,12 @@ func TestLoadYAMLPath(t *testing.T) {
 		t.Fatalf("id %s", got.ID)
 	}
 
-	if _, err := Load(dir); err == nil || !strings.Contains(err.Error(), "directory") {
-		t.Fatalf("directory: %v", err)
+	got, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "github.com/michal-szczepaniak/yottagram" || got.File != file {
+		t.Fatalf("directory id %s file %s", got.ID, got.File)
 	}
 	outside := filepath.Join(t.TempDir(), "build.yaml")
 	if err := os.WriteFile(outside, []byte(yaml), 0o644); err != nil {

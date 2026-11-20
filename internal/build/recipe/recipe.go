@@ -51,6 +51,9 @@ type Recipe struct {
 	// A change to a dependency rebuilds this recipe, and then every recipe
 	// that depends on it.
 	Depends []string
+	// Network lets the rpmbuild container reach the internet. The package
+	// is rated as built online.
+	Network bool
 }
 
 type recipeFile struct {
@@ -67,6 +70,7 @@ type recipeFile struct {
 	Overlay     string   `yaml:"overlay"`
 	Patches     string   `yaml:"patches"`
 	Depends     []string `yaml:"depends"`
+	Network     bool     `yaml:"network"`
 }
 
 // Root is the recipes checkout named by FTUNA_RECIPES.
@@ -107,7 +111,14 @@ func Load(path string) (Recipe, error) {
 		return Recipe{}, err
 	}
 	if st.IsDir() {
-		return Recipe{}, fmt.Errorf("%s is a directory", path)
+		abs = filepath.Join(abs, "build.yaml")
+		st, err = os.Stat(abs)
+		if err != nil {
+			return Recipe{}, err
+		}
+		if st.IsDir() {
+			return Recipe{}, fmt.Errorf("%s is a directory", abs)
+		}
 	}
 	if !strings.HasSuffix(abs, ".yaml") {
 		return Recipe{}, fmt.Errorf("%s is not a yaml file", path)
@@ -262,6 +273,7 @@ func load(root, yamlPath string) (Recipe, error) {
 		File:        yamlPath,
 		Repos:       repos,
 		Depends:     depends,
+		Network:     file.Network,
 	}, nil
 }
 

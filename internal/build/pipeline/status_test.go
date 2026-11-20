@@ -235,6 +235,7 @@ func TestPrepareStatusRebuildFailedKeepsCurrent(t *testing.T) {
 				"aarch64": {RPMs: []RPMRec{{File: r.ID + "/app.aarch64.rpm", Name: "app"}}},
 				"armv7hl": {RPMs: []RPMRec{{File: r.ID + "/app.armv7hl.rpm", Name: "app"}}},
 				"i486":    {RPMs: []RPMRec{{File: r.ID + "/app.i486.rpm", Name: "app"}}},
+				"src":     {RPMs: []RPMRec{{File: r.ID + "/app.src.rpm", Name: "app"}}},
 			},
 		},
 	}}
@@ -291,6 +292,7 @@ func TestPrepareStatusCurrentSkipsBuild(t *testing.T) {
 				"aarch64": {RPMs: []RPMRec{{File: r.ID + "/app.aarch64.rpm", Name: "app"}}},
 				"armv7hl": {RPMs: []RPMRec{{File: r.ID + "/app.armv7hl.rpm", Name: "app"}}},
 				"i486":    {RPMs: []RPMRec{{File: r.ID + "/app.i486.rpm", Name: "app"}}},
+				"src":     {RPMs: []RPMRec{{File: r.ID + "/app.src.rpm", Name: "app"}}},
 			},
 		},
 	}}
@@ -317,6 +319,7 @@ func TestPrepareStatusRebuildsWhenFingerprintChanges(t *testing.T) {
 				"aarch64": {RPMs: []RPMRec{{File: r.ID + "/app.aarch64.rpm", Name: "app"}}},
 				"armv7hl": {RPMs: []RPMRec{{File: r.ID + "/app.armv7hl.rpm", Name: "app"}}},
 				"i486":    {RPMs: []RPMRec{{File: r.ID + "/app.i486.rpm", Name: "app"}}},
+				"src":     {RPMs: []RPMRec{{File: r.ID + "/app.src.rpm", Name: "app"}}},
 			},
 		},
 	}}
@@ -518,6 +521,10 @@ func publishedManifest(recipes []recipe.Recipe) Manifest {
 				Name: "pkg",
 			}}}
 		}
+		arches["src"] = ArchBuild{RPMs: []RPMRec{{
+			File: r.ID + "/pkg.src.rpm",
+			Name: "pkg",
+		}}}
 		man.Recipes[r.ID] = RecipeBuild{Commit: r.Commit, Arches: arches}
 	}
 	return man

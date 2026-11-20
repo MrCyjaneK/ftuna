@@ -8,6 +8,8 @@ func TestScratchPathOK(t *testing.T) {
 		"aarch64/github.com/owner/name/app.rpm",
 		"armv7hl/repodata/repomd.xml",
 		"i486/repodata/ab-primary.xml.gz",
+		"src/github.com/owner/name/app-1.src.rpm",
+		"src/repodata/repomd.xml",
 		"info.json.xz",
 	}
 	bad := []string{

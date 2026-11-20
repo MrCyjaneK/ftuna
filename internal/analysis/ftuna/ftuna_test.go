@@ -42,6 +42,19 @@ func TestCheck(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 
+	onlineDir := filepath.Join(root, "chromium.googlesource.com", "chromium", "tools", "depot_tools")
+	if err := os.MkdirAll(onlineDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(onlineDir, "build.yaml"), []byte("network: true\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	onlineKey := "scratch/20260102T150405Z-abcd/aarch64/chromium.googlesource.com/chromium/tools/depot_tools/depot-tools-20261120-1.aarch64.rpm"
+	got = Check(onlineKey, root)
+	if len(got) != 2 || got[0].Detail != "online" || got[0].Color != check.ColorRed || got[1].Code != "ftuna.network" {
+		t.Fatalf("%+v", got)
+	}
+
 	if got := Check("mirror/chum/obs/app.rpm", root); got != nil {
 		t.Fatalf("%+v", got)
 	}

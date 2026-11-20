@@ -38,6 +38,30 @@ func TestStageFlatRPM(t *testing.T) {
 	}
 }
 
+func TestStageSourceRPM(t *testing.T) {
+	dir := t.TempDir()
+	writeScratchRPM(t, filepath.Join(dir, "app-1.0.0-1.aarch64.rpm"), "aarch64")
+	writeScratchRPM(t, filepath.Join(dir, "app-1.0.0-1.src.rpm"), "src")
+	staged, cleanup, err := stageRepo(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for _, rel := range []string{
+		"aarch64/app-1.0.0-1.aarch64.rpm",
+		"aarch64/repodata/repomd.xml",
+		"src/app-1.0.0-1.src.rpm",
+		"src/repodata/repomd.xml",
+	} {
+		if _, err := os.Stat(filepath.Join(staged, filepath.FromSlash(rel))); err != nil {
+			t.Fatalf("%s: %v", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(staged, "aarch64", "app-1.0.0-1.src.rpm")); !os.IsNotExist(err) {
+		t.Fatal("source rpm was copied into the binary repository")
+	}
+}
+
 func TestStageNoarchOnly(t *testing.T) {
 	dir := t.TempDir()
 	writeScratchRPM(t, filepath.Join(dir, "doc-1.0.0-1.noarch.rpm"), "noarch")

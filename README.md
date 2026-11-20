@@ -46,11 +46,13 @@ mirror/openrepos/openrepos.key
 mirror/openrepos/info.json.xz                      # catalog index, written after each mirror
 
 repo/ftuna-oss/<version>/<arch>/<recipe>/*.rpm     # signed public rpm-md repo; repodata stays on <arch>/
+repo/ftuna-oss/<version>/src/<recipe>/*.src.rpm    # signed source repo; one .src.rpm per package
 repo/ftuna-oss/<version>/manifest.json             # commit -> rpm names, for rebuild skips
 repo/ftuna-oss/<version>/status.json               # per-recipe build status; failures stay until the recipe changes
 repo/ftuna-oss/info.json.xz                        # catalog index, regenerated on every all publish
 repo/ftuna-oss/ftuna-oss.key
 scratch/<user>/<id>/<arch>/<recipe>/*.rpm          # unsigned repo; <id> is the publish name
+scratch/<user>/<id>/src/<recipe>/*.src.rpm         # the source RPM for that scratch build
 scratch/<user>/<id>/meta.json                      # created and expire, unix timestamps
 scratch/<user>/<id>/info.json.xz                   # catalog index for that scratch repo
 cdn-mirror/raw.githubusercontent.com/...           # icon and screenshot bytes
@@ -86,6 +88,8 @@ Recipes live in [ftuna-recipes](https://github.com/MrCyjaneK/ftuna-recipes). `FT
 
 `repos` is a list of extra https repositories installed into the SDK image before the build, as `.sfosbuild/image/00-ftuna-repos.sh`. `{version}` is the Sailfish OS version (`5.1.0.11`), `{release}` is major.minor (`5.1`), and `{arch}` is `aarch64`, `armv7hl`, or `i486`. A `{version}/{arch}` URL keeps the full version, which is what `https://repo-oss.ftuna.eu/{version}/{arch}/` uses. A `{version}_{arch}` URL follows Chum: from 4.6, `{version}` is major.minor, so `https://repo.sailfishos.org/obs/sailfishos:/chum/{version}_{arch}/` becomes `5.1_aarch64`. Append `;` and an https signing-key URL, for example `https://repo-oss.ftuna.eu/{version}/{arch}/;https://repo-oss.ftuna.eu/ftuna-oss.key`. That key is set as `gpgkey=` so zypper imports it when the repository is refreshed. Changing `repos` rebuilds that package.
 
+The build passes `--source`. sfosbuild runs `rpmbuild -ba` and writes one `.src.rpm` per package into the output directory. That file is published once at `https://repo-oss.ftuna.eu/{version}/src/`, with its own signed repodata. It is not copied into the binary repositories, and it is left out of `info.json.xz`, so a phone does not try to install it. A published recipe that has no source RPM is built again.
+
 `depends` lists recipe IDs that this package builds on. Go 1.19 lists `github.com/golang/go/go1_18`, and Go 1.21 lists `github.com/golang/go/go1_19`. `all` builds a dependency first and publishes it before the next recipe starts, so the dependent build can install the new RPMs. A dependency that failed is not followed by its dependents. Changing a dependency rebuilds every recipe that depends on it, including indirectly: a Go 1.18 change rebuilds Go 1.19 and then Go 1.21. A dependency has to build every architecture the dependent builds. Cycles are rejected.
 
 The Sailfish OS version is an argument and applies to every recipe. `.env` is read from the working directory.
@@ -100,7 +104,7 @@ go run ./cmd/ftuna scratch register
 go run ./cmd/ftuna scratch publish <dir> <name>
 ```
 
-`all` publishes `repo/ftuna-oss/<version>/` after each recipe, in dependency order, writes the signing key when it changed, and skips a recipe whose commit is already on S3. A recipe that failed is recorded in `status.json` and is not built again until its inputs change. `--rebuild-failed` builds those failed and skipped recipes again, including when the last successful publish of the same commit is still in the repo. `--force` does the same. A stopped run keeps the packages already published. A single recipe takes a path to its yaml and a scratch name, and publishes the RPMs it produced to `scratchpad-repo.ftuna.eu/<account>/<name>/`. The yaml has to be inside `FTUNA_RECIPES`. Publishing that name again replaces the repo.
+`all` publishes `repo/ftuna-oss/<version>/` after each recipe, in dependency order, writes the signing key when it changed, and skips a recipe whose commit and source RPM are already on S3. A recipe that failed is recorded in `status.json` and is not built again until its inputs change. `--rebuild-failed` builds those failed and skipped recipes again, including when the last successful publish of the same commit is still in the repo. `--force` does the same. A stopped run keeps the packages already published. A single recipe takes a path to its yaml and a scratch name, and publishes the RPMs it produced, including the `.src.rpm`, to `scratchpad-repo.ftuna.eu/<account>/<name>/`. The yaml has to be inside `FTUNA_RECIPES`. Publishing that name again replaces the repo.
 
 ## Website
 

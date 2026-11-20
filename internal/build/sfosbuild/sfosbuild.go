@@ -16,7 +16,7 @@ import (
 // logTailLimit is how much sfosbuild output is kept for status.json.
 const logTailLimit = 256 * 1024
 
-func Run(ctx context.Context, version, arches, project, outDir, buildPath, commit string) (string, error) {
+func Run(ctx context.Context, version, arches, project, outDir, buildPath, commit string, network bool) (string, error) {
 	bin, err := exec.LookPath("sfosbuild")
 	if err != nil {
 		return "", fmt.Errorf("sfosbuild not on PATH")
@@ -37,7 +37,7 @@ func Run(ctx context.Context, version, arches, project, outDir, buildPath, commi
 	tail := &tailWriter{limit: logTailLimit}
 	for _, pkg := range pkgs {
 		// Flags have to come before the version. sfosbuild stops parsing at the first positional argument.
-		cmd := exec.CommandContext(ctx, bin, commandArgs(outDir, version, arches, pkg)...)
+		cmd := exec.CommandContext(ctx, bin, commandArgs(outDir, version, arches, pkg, network)...)
 		cmd.Dir = project
 		// HEAD is past the pinned commit: Prepare commits patches, the overlay, and .sfosbuild.
 		cmd.Env = append(os.Environ(), "SFOSBUILD_RELEASE_COMMIT="+commit)
@@ -51,10 +51,15 @@ func Run(ctx context.Context, version, arches, project, outDir, buildPath, commi
 	return tail.String(), nil
 }
 
-// commandArgs is the sfosbuild invocation. --stamp appends the committer time
-// and rev-list count of SFOSBUILD_RELEASE_COMMIT to Release.
-func commandArgs(outDir, version, arches, pkg string) []string {
-	return []string{"-o", outDir, "--stamp", version, arches, pkg}
+// commandArgs is the sfosbuild invocation. --source builds the .src.rpm
+// (rpmbuild -ba) and copies it into the output directory. --stamp appends
+// the committer time and rev-list count of SFOSBUILD_RELEASE_COMMIT to Release.
+func commandArgs(outDir, version, arches, pkg string, network bool) []string {
+	args := []string{"-o", outDir}
+	if network {
+		args = append(args, "--network")
+	}
+	return append(args, "--source", "--stamp", version, arches, pkg)
 }
 
 // packageFiles returns the yaml or spec files sfosbuild builds, relative to project.

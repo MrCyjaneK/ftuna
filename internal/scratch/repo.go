@@ -23,8 +23,9 @@ type rpmFile struct {
 // returned unchanged. Otherwise a temporary repository is built: loose
 // RPM files are placed under the architecture in their filename, and
 // repodata is written for each architecture. noarch packages are copied
-// into every architecture in the repository. When every package is
-// noarch, that is aarch64, armv7hl, and i486.
+// into every binary architecture in the repository. When every package is
+// noarch, that is aarch64, armv7hl, and i486. A .src.rpm is placed once
+// under src/.
 func stageRepo(src string) (string, func(), error) {
 	rpms, info, err := listRPMs(src)
 	if err != nil {
@@ -97,7 +98,7 @@ func oneLayout(rpms []rpmFile) (bool, error) {
 		looseN++
 	}
 	if archN > 0 && looseN > 0 {
-		return false, fmt.Errorf("scratch: put every rpm under aarch64, armv7hl, or i486, or keep them all together")
+		return false, fmt.Errorf("scratch: put every rpm under aarch64, armv7hl, i486, or src, or keep them all together")
 	}
 	return archN > 0, nil
 }
@@ -108,7 +109,7 @@ func archOfPath(rel string) (string, bool) {
 		return "", false
 	}
 	switch arch {
-	case "aarch64", "armv7hl", "i486":
+	case "aarch64", "armv7hl", "i486", "src":
 		return arch, true
 	default:
 		return "", false
@@ -165,21 +166,25 @@ func fillRepo(dst string, rpms []rpmFile, info string, archLayout bool) error {
 	}
 	targets := map[string]bool{}
 	var noarch []rpmFile
+	var sources []rpmFile
 	for _, rpm := range rpms {
 		arch, err := archOfName(rpm.rel)
 		if err != nil {
 			return fmt.Errorf("scratch: %w", err)
 		}
-		if arch == "noarch" {
+		switch arch {
+		case "noarch":
 			noarch = append(noarch, rpm)
-			continue
-		}
-		targets[arch] = true
-		if err := place(rpm.abs, arch+"/"+filepath.Base(rpm.rel)); err != nil {
-			return err
+		case "src":
+			sources = append(sources, rpm)
+		default:
+			targets[arch] = true
+			if err := place(rpm.abs, arch+"/"+filepath.Base(rpm.rel)); err != nil {
+				return err
+			}
 		}
 	}
-	if len(targets) == 0 {
+	if len(targets) == 0 && len(sources) == 0 {
 		for _, arch := range scratchArches {
 			targets[arch] = true
 		}
@@ -192,8 +197,18 @@ func fillRepo(dst string, rpms []rpmFile, info string, archLayout bool) error {
 			}
 		}
 	}
+	for _, rpm := range sources {
+		if err := place(rpm.abs, "src/"+filepath.Base(rpm.rel)); err != nil {
+			return err
+		}
+	}
 	for arch := range targets {
 		if err := rpmmd.Write(filepath.Join(dst, arch)); err != nil {
+			return err
+		}
+	}
+	if len(sources) > 0 {
+		if err := rpmmd.Write(filepath.Join(dst, "src")); err != nil {
 			return err
 		}
 	}
@@ -212,7 +227,7 @@ func archOfName(rel string) (string, error) {
 	}
 	arch := name[i+1:]
 	switch arch {
-	case "aarch64", "armv7hl", "i486", "noarch":
+	case "aarch64", "armv7hl", "i486", "noarch", "src":
 		return arch, nil
 	default:
 		return "", fmt.Errorf("unknown arch %s in %s", arch, rel)
