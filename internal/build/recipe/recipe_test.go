@@ -113,6 +113,25 @@ func TestDiscoverPath(t *testing.T) {
 	}
 }
 
+func TestDiscoverSpecPath(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "github.com", "mrcyjanek", "flutter-sailfishos")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "name: Flutter 3.47.7\ncommit: 1023ab50a085e6307f818971276818dd176eecb2\nai: H\ndescription: Flutter 3.47.7\npath: ./rpm/flutter-sfos-3.47.7.spec\n"
+	if err := os.WriteFile(filepath.Join(dir, "3.47.7.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Discover(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Path != "rpm/flutter-sfos-3.47.7.spec" {
+		t.Fatalf("path %q", got[0].Path)
+	}
+}
+
 func TestRejectsPathOutsideRepository(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "github.com", "example", "app")
@@ -123,11 +142,10 @@ func TestRejectsPathOutsideRepository(t *testing.T) {
 	base := "name: An app\ncommit: 0123456789abcdef0123456789abcdef01234567\nai: H\ndescription: An app\n"
 	for _, yaml := range []string{
 		base,
-		base + "path: rpm/app.yaml\n",
-		base + "path: rpm/app.spec\n",
 		base + "path: /tmp/apps\n",
 		base + "path: ../app\n",
 		base + "path: apps/../../etc\n",
+		base + "path: ../rpm/app.spec\n",
 	} {
 		if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
 			t.Fatal(err)

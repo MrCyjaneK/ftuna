@@ -28,8 +28,9 @@ type Recipe struct {
 	URL     string
 	Patches string
 	Overlay string
-	// Path is the directory inside the clone that contains rpm/.
-	// "." is the repository root. apps/sfos is that subdirectory.
+	// Path is the directory inside the clone that contains rpm/, or one
+	// .yaml or .spec file. "." is the repository root. apps/sfos is that
+	// subdirectory. A file builds only that file.
 	Path        string
 	Icon        string
 	Screenshots []string
@@ -264,22 +265,20 @@ func load(root, yamlPath string) (Recipe, error) {
 	}, nil
 }
 
-// cleanPath is the directory inside the clone that contains rpm/.
+// cleanPath is the project inside the clone, or one spectacle yaml or rpm spec.
 // "." is the repository root. ./apps/sfos and apps/sfos both name that subdirectory.
+// rpm/flutter-sfos.spec builds only that file.
 func cleanPath(s string) (string, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return "", fmt.Errorf("path is required")
 	}
 	if filepath.IsAbs(s) {
-		return "", fmt.Errorf("path %q must be a directory inside the repository", s)
+		return "", fmt.Errorf("path %q must be inside the repository", s)
 	}
 	clean := filepath.ToSlash(filepath.Clean(s))
 	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("path %q must be a directory inside the repository", s)
-	}
-	if strings.HasSuffix(clean, ".yaml") || strings.HasSuffix(clean, ".spec") {
-		return "", fmt.Errorf("path %q must be the directory that contains rpm/", s)
+		return "", fmt.Errorf("path %q must be inside the repository", s)
 	}
 	return clean, nil
 }

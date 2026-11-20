@@ -22,7 +22,7 @@ func Run(ctx context.Context, version, arches, project, outDir, buildPath, commi
 		return "", fmt.Errorf("sfosbuild not on PATH")
 	}
 	if strings.TrimSpace(buildPath) == "" {
-		return "", fmt.Errorf("sfosbuild needs the directory that contains rpm/")
+		return "", fmt.Errorf("sfosbuild needs a project directory or a .yaml or .spec file")
 	}
 	if strings.TrimSpace(commit) == "" {
 		return "", fmt.Errorf("sfosbuild needs the commit to stamp")
@@ -58,11 +58,23 @@ func commandArgs(outDir, version, arches, pkg string) []string {
 }
 
 // packageFiles returns the yaml or spec files sfosbuild builds, relative to project.
-// buildPath is the directory that contains rpm/. The first non-empty pattern wins.
+// A .yaml or .spec buildPath is that one file. A directory is the project that
+// contains rpm/. The first non-empty pattern wins.
 func packageFiles(project, buildPath string) ([]string, error) {
+	rel := filepath.ToSlash(filepath.Clean(buildPath))
 	root := project
-	if buildPath != "." {
-		root = filepath.Join(project, filepath.FromSlash(buildPath))
+	if rel != "." {
+		root = filepath.Join(project, filepath.FromSlash(rel))
+	}
+	st, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", buildPath, err)
+	}
+	if !st.IsDir() {
+		if !specFile(rel) {
+			return nil, fmt.Errorf("%s is not a .yaml or .spec", buildPath)
+		}
+		return []string{rel}, nil
 	}
 	for _, pattern := range []string{
 		filepath.Join(root, "rpm", "*.yaml"),
@@ -89,6 +101,15 @@ func packageFiles(project, buildPath string) ([]string, error) {
 		return out, nil
 	}
 	return nil, fmt.Errorf("no rpm/*.yaml or rpm/*.spec in %s", buildPath)
+}
+
+func specFile(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".spec":
+		return true
+	default:
+		return false
+	}
 }
 
 // tailWriter keeps the last limit bytes written to it.
